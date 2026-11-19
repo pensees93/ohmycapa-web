@@ -161,4 +161,43 @@ describe('Stage 3 Compare & Key Generation Unit Tests', () => {
       onlyInB: [],
     });
   });
+
+  it('recognizes ASN.1 lowercase qam256 coverage dominance over qam64 and omitted QAM', () => {
+    const devA = makeDevice('A', {
+      'eutra-nr': {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam256' },
+              { ratType: 'nr', band: 78, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4, ulQam: 'qam256' },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const devB = makeDevice('B', {
+      'eutra-nr': {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam64' },
+              { ratType: 'nr', band: 78, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4 },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+
+    const res = compareCapaFormats(devA, devB);
+    const diffs = res.ratResults['eutra-nr']?.comboDiffs ?? [];
+    const coveredB = diffs.find((d) => d.status === 'b-only-covered');
+    expect(coveredB).toBeDefined();
+    expect(coveredB?.paramNotes?.some((n) => n.includes('256QAM covers 64QAM'))).toBe(true);
+  });
 });

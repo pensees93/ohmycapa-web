@@ -351,10 +351,13 @@ function isUlCoveredCombo(
  * Higher rank = superset of lower rank.
  */
 function qamRank(q: string | undefined): number {
-  switch (q) {
-    case '1024QAM': return 3;
-    case '256QAM':  return 2;
-    case '64QAM':   return 1;
+  switch (q?.toLowerCase()) {
+    case '1024qam':
+    case 'qam1024': return 3;
+    case '256qam':
+    case 'qam256':  return 2;
+    case '64qam':
+    case 'qam64':   return 1;
     default:        return 1; // undefined = 64QAM default
   }
 }

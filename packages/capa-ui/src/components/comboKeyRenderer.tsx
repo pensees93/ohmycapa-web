@@ -21,79 +21,67 @@ const MONO_FONT_STACK = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 
 
 // ─── Token parser ─────────────────────────────────────────────────────────────
 
-interface SegmentTokens {
+export interface SegmentTokens {
   bandLabel: string;   // e.g. "B3c", "n78a"
   baseBand: string;    // e.g. "B3", "n78"
   dlMimo?: string;     // e.g. "4"
-  dlQam?: string;      // e.g. "256QAM"
-  dlBw?: string;       // e.g. "50MHz"
+  dlQam?: string;      // canonical e.g. "256QAM", "64QAM"
+  dlBw?: string;       // canonical e.g. "100MHz"
   ulBwCls?: string;    // e.g. "a"
   ulMimo?: string;     // e.g. "2"
-  ulQam?: string;      // e.g. "256QAM"
-  ulBw?: string;       // e.g. "50MHz"
+  ulQam?: string;      // canonical e.g. "256QAM", "64QAM"
+  ulBw?: string;       // canonical e.g. "100MHz"
 }
 
-function parseSegment(seg: string): SegmentTokens {
+function normalizeQamToken(raw: string): string {
+  const asnMatch = raw.match(/^qam(\d+)$/i);
+  if (asnMatch) return `${asnMatch[1]}QAM`;
+  const suffixMatch = raw.match(/^(\d+)qam$/i);
+  if (suffixMatch) return `${suffixMatch[1]}QAM`;
+  return raw;
+}
+
+export function parseSegment(seg: string): SegmentTokens {
   // band label: leading [Bn]\d+[a-z]*
   const bandMatch = seg.match(/^([Bn]\d+[a-z]*)/i);
   const bandLabel = bandMatch ? bandMatch[1] : seg;
   const baseMatch = bandLabel.match(/^([Bn]\d+)/i);
   const baseBand = baseMatch ? baseMatch[1] : bandLabel;
-  let rest = seg.slice(bandLabel.length);
+  const rest = seg.slice(bandLabel.length);
 
-  // DL MIMO: first (N) before any UL marker
   let dlMimo: string | undefined;
-  const mimoMatch = rest.match(/^\((\d+)\)/);
-  if (mimoMatch) {
-    dlMimo = mimoMatch[1];
-    rest = rest.slice(mimoMatch[0].length);
-  }
-
-  // DL QAM: (256QAM) or (64QAM) or (1024QAM)
   let dlQam: string | undefined;
-  const dlQamMatch = rest.match(/^\((\d+QAM)\)/);
-  if (dlQamMatch) {
-    dlQam = dlQamMatch[1];
-    rest = rest.slice(dlQamMatch[0].length);
-  }
-
-  // DL BW: (50MHz)
   let dlBw: string | undefined;
-  const dlBwMatch = rest.match(/^\((\d+MHz)\)/);
-  if (dlBwMatch) {
-    dlBw = dlBwMatch[1];
-    rest = rest.slice(dlBwMatch[0].length);
-  }
-
-  // UL section: (UL,x)
   let ulBwCls: string | undefined;
   let ulMimo: string | undefined;
   let ulQam: string | undefined;
   let ulBw: string | undefined;
-  const ulBwClsMatch = rest.match(/^\(UL,([a-z]+)\)/i);
-  if (ulBwClsMatch) {
-    ulBwCls = ulBwClsMatch[1];
-    rest = rest.slice(ulBwClsMatch[0].length);
 
-    // UL MIMO: (N)
-    const ulMimoMatch = rest.match(/^\((\d+)\)/);
-    if (ulMimoMatch) {
-      ulMimo = ulMimoMatch[1];
-      rest = rest.slice(ulMimoMatch[0].length);
+  let inUl = false;
+  for (const match of rest.matchAll(/\(([^)]+)\)/g)) {
+    const token = match[1].trim();
+    const ulMatch = token.match(/^UL,([a-z]+)$/i);
+    if (ulMatch) {
+      inUl = true;
+      ulBwCls = ulMatch[1];
+      continue;
     }
-
-    // UL QAM: (256QAM) or (64QAM)
-    const ulQamMatch = rest.match(/^\((\d+QAM)\)/);
-    if (ulQamMatch) {
-      ulQam = ulQamMatch[1];
-      rest = rest.slice(ulQamMatch[0].length);
+    if (/^\d+$/.test(token)) {
+      if (inUl) ulMimo = token;
+      else dlMimo = token;
+      continue;
     }
-
-    // UL BW: (50MHz)
-    const ulBwMatch2 = rest.match(/^\((\d+MHz)\)/);
-    if (ulBwMatch2) {
-      ulBw = ulBwMatch2[1];
-      rest = rest.slice(ulBwMatch2[0].length);
+    if (/^(?:qam\d+|\d+qam)$/i.test(token)) {
+      const qam = normalizeQamToken(token);
+      if (inUl) ulQam = qam;
+      else dlQam = qam;
+      continue;
+    }
+    const bwMatch = token.match(/^(?:(\d+)MHz|mhz(\d+))$/i);
+    if (bwMatch) {
+      const bw = `${bwMatch[1] ?? bwMatch[2]}MHz`;
+      if (inUl) ulBw = bw;
+      else dlBw = bw;
     }
   }
 
@@ -120,7 +108,8 @@ const DIFF_PILL_STYLE: Record<'superset' | 'changed', React.CSSProperties> = {
 };
 
 function QamDiamond({ qam, isUl }: { qam: string; isUl: boolean }) {
-  const is256 = qam.startsWith('256') || qam.startsWith('1024');
+  const norm = normalizeQamToken(qam);
+  const is256 = norm === '256QAM' || norm === '1024QAM';
   const color = isUl ? '#00897B' : '#E65100';
   const symbol = is256 ? '◆' : '◇';
   return (
