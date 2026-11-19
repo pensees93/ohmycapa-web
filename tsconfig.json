@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "@ohmycapa/capa-core": ["./packages/capa-core/src/index.ts"],
+      "@ohmycapa/capa-ui": ["./packages/capa-ui/src/index.ts"]
+    }
+  },
+  "include": [
+    "src",
+    "packages/capa-core/src",
+    "packages/capa-core/tests",
+    "packages/capa-ui/src"
+  ]
+}
