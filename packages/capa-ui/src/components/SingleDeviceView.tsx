@@ -11,7 +11,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import { exportSingleDeviceToExcelCompat } from '../utils/tauriExportUtils';
 import { getBwClassCcCount, generateCombinationKey } from '@ohmycapa/capa-core';
 import type { CompareFormat, RatType, NRBandInfo, EutraBandInfo, BandCombination, BandParameter, ComboDisplayOptions } from '@ohmycapa/capa-core';
-import { renderComboKey } from './comboKeyRenderer';
+import { renderComboKey, ComboSymbolLegend } from './comboKeyRenderer';
 import { SingleDeviceFeaturesView } from './FeaturesCompareView';
 import { BandFilterChips } from './BandFilterChips';
 import { DEVICE_COLOR, STATUS_COLOR } from '../constants/statusMeta';
@@ -349,9 +349,11 @@ const ComboList = memo<{ combos: BandCombination[]; options: ComboDisplayOptions
 
 const BandComboSection = memo<{ combos: BandCombination[]; ratType: RatType }>(({ combos, ratType }) => {
   const isDark = useTheme().palette.mode === 'dark';
-  const [options, setOptions] = useState<ComboDisplayOptions>({
-    showQam: true, showMimo: true, mergeRedundant: true,
-  });
+  const [mergeRedundant, setMergeRedundant] = useState(true);
+  const options = useMemo<ComboDisplayOptions>(
+    () => ({ showQam: true, showMimo: true, mergeRedundant }),
+    [mergeRedundant]
+  );
   const [selectedBands, setSelectedBands] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
@@ -415,7 +417,7 @@ const BandComboSection = memo<{ combos: BandCombination[]; ratType: RatType }>((
         borderBottom: '1px solid',
         borderColor: 'divider',
       }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: allBands.length > 0 ? 0.75 : 0, flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.75, flexWrap: 'wrap' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
             <TextField
               size="small"
@@ -430,15 +432,7 @@ const BandComboSection = memo<{ combos: BandCombination[]; ratType: RatType }>((
               sx={{ width: 170, '& .MuiInputBase-input': { fontSize: '0.74rem', py: 0.4 } }}
             />
             <FormControlLabel
-              control={<Checkbox size="small" checked={!!options.showQam} onChange={e => setOptions(p => ({ ...p, showQam: e.target.checked }))} sx={{ p: 0.3 }} />}
-              label={<Typography sx={{ fontSize: '0.64rem' }}>QAM</Typography>} sx={{ m: 0 }}
-            />
-            <FormControlLabel
-              control={<Checkbox size="small" checked={!!options.showMimo} onChange={e => setOptions(p => ({ ...p, showMimo: e.target.checked }))} sx={{ p: 0.3 }} />}
-              label={<Typography sx={{ fontSize: '0.64rem' }}>MIMO</Typography>} sx={{ m: 0 }}
-            />
-            <FormControlLabel
-              control={<Checkbox size="small" checked={options.mergeRedundant !== false} onChange={e => setOptions(p => ({ ...p, mergeRedundant: e.target.checked }))} sx={{ p: 0.3 }} />}
+              control={<Checkbox size="small" checked={mergeRedundant} onChange={e => setMergeRedundant(e.target.checked)} sx={{ p: 0.3 }} />}
               label={<Typography sx={{ fontSize: '0.64rem' }}>Merge</Typography>} sx={{ m: 0 }}
             />
           </Box>
@@ -448,9 +442,14 @@ const BandComboSection = memo<{ combos: BandCombination[]; ratType: RatType }>((
             sx={{ height: 18, fontSize: '0.62rem', fontWeight: 600, bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)' }}
           />
         </Box>
-        {allBands.length > 0 && (
-          <BandFilterChips allBands={allBands} selected={selectedBands} onToggle={toggleBand} onClear={() => setSelectedBands(new Set())} />
-        )}
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1.5, flexWrap: 'wrap' }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            {allBands.length > 0 && (
+              <BandFilterChips allBands={allBands} selected={selectedBands} onToggle={toggleBand} onClear={() => setSelectedBands(new Set())} />
+            )}
+          </Box>
+          <ComboSymbolLegend />
+        </Box>
       </Box>
 
       <ComboList combos={filteredCombos} options={options} ratType={ratType} />

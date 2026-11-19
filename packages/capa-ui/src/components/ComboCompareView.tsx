@@ -1,8 +1,7 @@
 import React, { useState, useMemo, useCallback, useDeferredValue } from 'react';
 import {
   Box, Typography, Chip, TextField, InputAdornment,
-  ToggleButtonGroup, ToggleButton, Tooltip, Button,
-  Checkbox, FormControlLabel, useTheme,
+  ToggleButtonGroup, ToggleButton, Tooltip, Button, useTheme,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -10,7 +9,7 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined';
 import { getBwClassCcCount, generateCombinationKey } from '@ohmycapa/capa-core';
 import type { ComboDiff, CoverageAnalysis, ComboDisplayOptions, RatType } from '@ohmycapa/capa-core';
-import { renderComboKey, renderComboKeyDiff, extractSupersetDeltaLabels } from './comboKeyRenderer';
+import { renderComboKey, renderComboKeyDiff, extractSupersetDeltaLabels, ComboSymbolLegend } from './comboKeyRenderer';
 import { COMBO_STATUS_META } from '../constants/statusMeta';
 import { BandFilterChips } from './BandFilterChips';
 
@@ -226,18 +225,16 @@ function buildExactChangedTooltip(diff: ComboDiff): string {
 const ComboRow = React.memo(function ComboRow({ diff, displayOptions }: { diff: ComboDiff; displayOptions?: ComboDisplayOptions }) {
   const meta = STATUS_META[diff.status] ?? STATUS_META['exact-same'];
 
-  // When parameters differ (even if MIMO/QAM toggles are off), reveal differing tokens on both sides
+  // Always show full MIMO, QAM, and UL tokens in combination rendering
   const { keyA, keyB, effectiveOpts } = useMemo(() => {
-    if (diff.status !== 'exact-changed') {
-      return { keyA: diff.key, keyB: diff.key, effectiveOpts: displayOptions };
-    }
-    const hasMimoDiff = diff.bandParamDiffs?.some(bd => bd.dlMimo?.status === 'changed' || bd.ulMimo?.status === 'changed') ?? false;
-    const hasQamDiff = diff.bandParamDiffs?.some(bd => bd.dlQam?.status === 'changed' || bd.ulQam?.status === 'changed') ?? false;
     const opts: ComboDisplayOptions = {
       ...displayOptions,
-      showMimo: !!displayOptions?.showMimo || hasMimoDiff,
-      showQam: !!displayOptions?.showQam || hasQamDiff,
+      showMimo: true,
+      showQam: true,
     };
+    if (diff.status !== 'exact-changed') {
+      return { keyA: diff.key, keyB: diff.key, effectiveOpts: opts };
+    }
     return {
       keyA: diff.a ? generateCombinationKey(diff.a, opts) : diff.key,
       keyB: diff.b ? generateCombinationKey(diff.b, opts) : diff.key,
@@ -437,11 +434,10 @@ interface ComboCompareViewProps {
   deviceBName?: string;
   displayOptions?: ComboDisplayOptions;
   ratType?: RatType;
-  onDisplayOptionsChange?: (updates: Partial<ComboDisplayOptions>) => void;
 }
 
 export const ComboCompareView: React.FC<ComboCompareViewProps> = ({
-  comboDiffs, coverage, deviceAName, deviceBName, displayOptions, ratType, onDisplayOptionsChange,
+  comboDiffs, coverage, deviceAName, deviceBName, displayOptions, ratType,
 }) => {
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
@@ -617,7 +613,7 @@ export const ComboCompareView: React.FC<ComboCompareViewProps> = ({
         borderBottom: '1px solid',
         borderColor: 'divider',
       }}>
-        <Box sx={{ display: 'flex', gap: 1, mb: allBandsInDiffs.length > 0 ? 0.75 : 0, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Box sx={{ display: 'flex', gap: 1, mb: 0.75, flexWrap: 'wrap', alignItems: 'center' }}>
           <TextField
             size="small"
             placeholder="Search combo..."
@@ -661,28 +657,18 @@ export const ComboCompareView: React.FC<ComboCompareViewProps> = ({
             <ToggleButton value="status">By Status</ToggleButton>
           </ToggleButtonGroup>
 
-          {onDisplayOptionsChange && (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <FormControlLabel
-                control={<Checkbox size="small" checked={!!displayOptions?.showQam} onChange={e => onDisplayOptionsChange({ showQam: e.target.checked })} sx={{ p: 0.3 }} />}
-                label={<Typography sx={{ fontSize: '0.64rem' }}>QAM</Typography>}
-                sx={{ m: 0 }}
-              />
-              <FormControlLabel
-                control={<Checkbox size="small" checked={!!displayOptions?.showMimo} onChange={e => onDisplayOptionsChange({ showMimo: e.target.checked })} sx={{ p: 0.3 }} />}
-                label={<Typography sx={{ fontSize: '0.64rem' }}>MIMO</Typography>}
-                sx={{ m: 0 }}
-              />
-            </Box>
-          )}
-
           <InlineCoverageMeter coverage={coverage} />
         </Box>
 
-        {/* Band filter chips */}
-        {allBandsInDiffs.length > 0 && (
-          <BandFilterChips allBands={allBandsInDiffs} selected={selectedBands} onToggle={toggleBand} onClear={() => setSelectedBands(new Set())} />
-        )}
+        {/* Band filter chips + Symbol legend */}
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1.5, flexWrap: 'wrap' }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            {allBandsInDiffs.length > 0 && (
+              <BandFilterChips allBands={allBandsInDiffs} selected={selectedBands} onToggle={toggleBand} onClear={() => setSelectedBands(new Set())} />
+            )}
+          </Box>
+          <ComboSymbolLegend />
+        </Box>
       </Box>
 
       {/* Groups list */}

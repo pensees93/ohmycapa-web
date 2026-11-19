@@ -444,3 +444,33 @@ export function extractSupersetDeltaLabels(supersetKey: string, baseKey: string)
 
   return labels;
 }
+
+/**
+ * Compact inline legend explaining abbreviated MIMO, QAM, and UL token symbols.
+ */
+export const ComboSymbolLegend: React.FC = () => (
+  <Box
+    sx={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 1,
+      flexWrap: 'wrap',
+      fontFamily: MONO_FONT_STACK,
+      fontSize: '0.62rem',
+      color: 'text.secondary',
+      flexShrink: 0,
+    }}
+  >
+    <span><b>(4)</b> MIMO</span>
+    <span>
+      <span style={{ color: '#E65100' }}>◆</span> 256QAM
+    </span>
+    <span>
+      <span style={{ color: '#E65100' }}>◇</span> 64QAM
+    </span>
+    <span>
+      <span style={{ color: '#00695C', fontWeight: 600 }}>↑a</span>
+      <span style={{ color: '#00897B' }}>◆</span> UL
+    </span>
+  </Box>
+);

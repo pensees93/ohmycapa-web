@@ -489,9 +489,8 @@ const RatDetailView = memo<{
   ratResult: RatCompareResult;
   compareResult: CapaCompareResult;
   comboOptions: ComboDisplayOptions;
-  onComboOptionsChange: (options: Partial<ComboDisplayOptions>) => void;
   onOpenUrl?: (url: string) => void;
-}>(({ ratType, activeSection, ratResult, compareResult, comboOptions, onComboOptionsChange, onOpenUrl }) => {
+}>(({ ratType, activeSection, ratResult, compareResult, comboOptions, onOpenUrl }) => {
   const featureDiff = compareResult.featuresDiff?.[ratType];
   const hasData = ratResult.bandDiffs.length > 0 || ratResult.comboDiffs.length > 0 || !!featureDiff;
 
@@ -514,7 +513,6 @@ const RatDetailView = memo<{
           deviceBName={compareResult.meta.deviceB.fileName}
           displayOptions={comboOptions}
           ratType={ratType}
-          onDisplayOptionsChange={onComboOptionsChange}
         />
       )}
 
@@ -548,9 +546,8 @@ const ComparisonPanel = memo<{
   activeRatValue: RatType | undefined;
   comboOptions: ComboDisplayOptions;
   onRatChange: (rat: RatType) => void;
-  onComboOptionsChange: (updates: Partial<ComboDisplayOptions>) => void;
   onOpenUrl?: (url: string) => void;
-}>(({ compareResult, availableRats, activeRatValue, comboOptions, onRatChange, onComboOptionsChange, onOpenUrl }) => {
+}>(({ compareResult, availableRats, activeRatValue, comboOptions, onRatChange, onOpenUrl }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
   const [sectionByRat, setSectionByRat] = useState<Partial<Record<RatType, DetailSection>>>({});
@@ -684,7 +681,6 @@ const ComparisonPanel = memo<{
             ratResult={activeRatResult}
             compareResult={compareResult}
             comboOptions={comboOptions}
-            onComboOptionsChange={onComboOptionsChange}
             onOpenUrl={onOpenUrl}
           />
         </Box>
@@ -711,7 +707,7 @@ const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyState
   const {
     deviceA, deviceB,
     compareResult, activeRat, isComparing, setActiveRat,
-    comboOptions, setComboOptions,
+    comboOptions,
     addFiles, removeFile, setDeviceName, clearDevice, swapDevices,
   } = useCapaCompare();
 
@@ -796,10 +792,6 @@ const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyState
   const activeRatValue = useMemo(() => {
     return availableRats.find(t => t.value === activeRat)?.value ?? availableRats[0]?.value;
   }, [availableRats, activeRat]);
-
-  const handleComboOptionsChange = useCallback((updates: Partial<ComboDisplayOptions>) => {
-    setComboOptions(prev => ({ ...prev, ...updates }));
-  }, [setComboOptions]);
 
   const dropzoneCard = (
     <Paper
@@ -964,7 +956,6 @@ const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyState
             activeRatValue={activeRatValue}
             comboOptions={comboOptions}
             onRatChange={setActiveRat}
-            onComboOptionsChange={handleComboOptionsChange}
             onOpenUrl={onOpenUrl}
           />
         )}
