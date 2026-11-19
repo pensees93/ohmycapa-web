@@ -565,7 +565,25 @@ export const SingleDeviceFeaturesView = React.memo<SingleDeviceFeaturesViewProps
   return (
     <OpenUrlContext.Provider value={onOpenUrl}>
     <Box>
-      <Box sx={{ mb: 1.25 }}>
+      {/* Sticky 1-line Search + Count Toolbar */}
+      <Box sx={{
+        position: 'sticky',
+        top: -12,
+        zIndex: 5,
+        pt: 1.5,
+        pb: 0.75,
+        mx: -1.5,
+        px: 1.5,
+        mb: 1.25,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 1,
+        bgcolor: isDark ? 'rgba(24,24,27,0.92)' : 'rgba(255,255,255,0.92)',
+        backdropFilter: 'blur(8px)',
+        borderBottom: '1px solid',
+        borderColor: 'divider',
+      }}>
         <TextField
           size="small"
           placeholder="Search features..."
@@ -574,10 +592,15 @@ export const SingleDeviceFeaturesView = React.memo<SingleDeviceFeaturesViewProps
           slotProps={{
             input: {
               startAdornment: <InputAdornment position="start"><SearchIcon sx={{ fontSize: 14 }} /></InputAdornment>,
-              sx: { fontSize: '0.72rem', height: 28}
+              sx: { fontSize: '0.72rem', height: 26 }
             }
           }}
-          sx={{ width: 220 }}
+          sx={{ width: 200 }}
+        />
+        <Chip
+          size="small"
+          label={filtered.length < leaves.length ? `${filtered.length} / ${leaves.length} features` : `${leaves.length} features`}
+          sx={{ height: 18, fontSize: '0.62rem', fontWeight: 600, bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)' }}
         />
       </Box>
 

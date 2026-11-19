@@ -25,7 +25,7 @@ import {
 } from './utils/tauriExportUtils';
 import { getTauriAdapter } from './utils/tauriAdapter';
 import { DEVICE_COLOR, STATUS_COLOR } from './constants/statusMeta';
-import type { RatType, ComboDisplayOptions, CapaCompareResult, RatCompareResult } from '@ohmycapa/capa-core';
+import type { RatType, ComboDisplayOptions, CapaCompareResult, RatCompareResult, CompareFormat } from '@ohmycapa/capa-core';
 
 // ─── Constants & Types ──────────────────────────────────────────────────────
 
@@ -336,6 +336,124 @@ const CompactCompareHeader = memo<{
 });
 
 /**
+ * Compact 1-line header shown in Single Device mode, mirroring CompactCompareHeader.
+ */
+const CompactSingleHeader = memo<{
+  device: CompareFormat;
+  side: 'A' | 'B';
+  deviceA: any;
+  deviceB: any;
+  isProcessing: boolean;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+  onSwap: () => void;
+}>(({ device, side, deviceA, deviceB, isProcessing, isExpanded, onToggleExpand, onSwap }) => {
+  const isDark = useTheme().palette.mode === 'dark';
+  const sideColor = side === 'A' ? DEVICE_COLOR.deviceA : DEVICE_COLOR.deviceB;
+  const otherSide = side === 'A' ? 'B' : 'A';
+  const otherColor = otherSide === 'A' ? DEVICE_COLOR.deviceA : DEVICE_COLOR.deviceB;
+  const displayName = (side === 'A' ? deviceA.deviceName : deviceB.deviceName) || device.meta.deviceName || device.meta.fileName;
+  const vendor = device.meta.vendor;
+
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        px: 1.5,
+        py: 0.75,
+        border: '1px solid',
+        borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+        borderRadius: 2.5,
+        bgcolor: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.6)',
+        backdropFilter: 'blur(10px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 1.5,
+        flexWrap: 'wrap',
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', minWidth: 0 }}>
+        <Tooltip title={displayName} placement="bottom">
+          <Box sx={{
+            display: 'flex', alignItems: 'center', gap: 0.6, px: 1, py: 0.3, borderRadius: 1.5,
+            border: '1px solid', borderColor: `${sideColor}44`, bgcolor: `${sideColor}0d`,
+          }}>
+            <Typography variant="caption" sx={{ fontWeight: 800, fontSize: '0.68rem', color: sideColor }}>
+              {side}
+            </Typography>
+            <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.72rem', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {displayName}
+            </Typography>
+            {vendor && vendor !== 'UNKNOWN' && (
+              <Chip label={vendor} size="small" sx={{ height: 15, fontSize: '0.58rem', fontWeight: 700 }} />
+            )}
+          </Box>
+        </Tooltip>
+
+        {isProcessing ? (
+          <CircularProgress size={16} />
+        ) : (
+          <Tooltip title="Swap A ↔ B" placement="top">
+            <IconButton size="small" onClick={onSwap} sx={{ p: 0.4, color: 'text.secondary' }}>
+              <SwapHorizIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Tooltip>
+        )}
+
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={onToggleExpand}
+          sx={{
+            fontSize: '0.68rem',
+            py: 0.2,
+            px: 1,
+            textTransform: 'none',
+            borderRadius: 1.5,
+            minHeight: 24,
+            borderStyle: 'dashed',
+            borderColor: `${otherColor}66`,
+            color: otherColor,
+            '&:hover': { borderStyle: 'dashed', borderColor: otherColor, bgcolor: `${otherColor}0d` },
+          }}
+        >
+          + Add Device {otherSide} to Compare
+        </Button>
+
+        <Divider orientation="vertical" flexItem sx={{ mx: 0.25, my: 0.3 }} />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+          {device.meta.detectedRats.map(r => (
+            <Chip
+              key={r}
+              label={r.toUpperCase()}
+              size="small"
+              sx={{ height: 17, fontSize: '0.58rem', fontWeight: 600, bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)' }}
+            />
+          ))}
+        </Box>
+      </Box>
+
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Button
+          size="small"
+          variant="outlined"
+          endIcon={isExpanded ? <ExpandLessIcon sx={{ fontSize: 15 }} /> : <ExpandMoreIcon sx={{ fontSize: 15 }} />}
+          onClick={onToggleExpand}
+          sx={{
+            fontSize: '0.7rem', py: 0.25, px: 1, textTransform: 'none',
+            borderRadius: 1.5, minHeight: 26, color: 'text.secondary', borderColor: 'divider',
+          }}
+        >
+          Files
+        </Button>
+        <ExportMenu deviceA={deviceA} deviceB={deviceB} compareResult={null} />
+      </Box>
+    </Paper>
+  );
+});
+
+/**
  * Detailed label for RAT tabs including diff badges.
  */
 const RatTabLabel = memo<{
@@ -612,12 +730,13 @@ const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyState
     setIsHeaderExpanded(false);
   }, [clearDevice]);
 
-  // Auto-expand dropzones when dragging files over a collapsed comparison page
+  // Auto-expand dropzones when dragging files over a collapsed single-device or compare view
   const handleRootDragEnter = useCallback((e: React.DragEvent) => {
-    if (hasResult && !isHeaderExpanded && e.dataTransfer?.types?.includes('Files')) {
+    const hasLoaded = hasResult || Boolean(deviceA.normalized || deviceB.normalized);
+    if (hasLoaded && !isHeaderExpanded && e.dataTransfer?.types?.includes('Files')) {
       setIsHeaderExpanded(true);
     }
-  }, [hasResult, isHeaderExpanded]);
+  }, [hasResult, deviceA.normalized, deviceB.normalized, isHeaderExpanded]);
 
   // Tauri v2: browser DragEvent is not fired for OS-level file drops.
   // Uses registered TauriAdapter (set by OhMyCapa App.tsx via registerTauriAdapter).
@@ -761,7 +880,7 @@ const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyState
       }} />
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', px: 2, py: 1.25, display: 'flex', flexDirection: 'column', gap: 1.25, zIndex: 1 }}>
-        {/* When comparing: compact 1-line header + collapsible Files/Summary drawer */}
+        {/* Compact 1-line header + collapsible drawer in Compare or Single Device mode */}
         {compareResult ? (
           <>
             <CompactCompareHeader
@@ -779,6 +898,22 @@ const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyState
                 {dropzoneCard}
                 <CompareSummaryDashboard result={compareResult} />
               </Box>
+            </Collapse>
+          </>
+        ) : singleDeviceInfo ? (
+          <>
+            <CompactSingleHeader
+              device={singleDeviceInfo.device}
+              side={singleDeviceInfo.side}
+              deviceA={deviceA}
+              deviceB={deviceB}
+              isProcessing={isProcessing}
+              isExpanded={isHeaderExpanded}
+              onToggleExpand={() => setIsHeaderExpanded(v => !v)}
+              onSwap={swapDevices}
+            />
+            <Collapse in={isHeaderExpanded} unmountOnExit>
+              {dropzoneCard}
             </Collapse>
           </>
         ) : (
@@ -817,7 +952,7 @@ const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyState
         {/* Single Device View */}
         {singleDeviceInfo && (
           <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <SingleDeviceView device={singleDeviceInfo.device} side={singleDeviceInfo.side} onOpenUrl={onOpenUrl} />
+            <SingleDeviceView device={singleDeviceInfo.device} side={singleDeviceInfo.side} onOpenUrl={onOpenUrl} hideHeader />
           </Box>
         )}
 

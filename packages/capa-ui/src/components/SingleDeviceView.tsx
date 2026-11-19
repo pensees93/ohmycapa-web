@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useDeferredValue, memo, useMemo } from 'react';
 import {
-  Box, Typography, Chip, Paper, Tabs, Tab, Divider,
+  Box, Typography, Chip, Paper, Tabs, Tab,
   useTheme, Collapse, Checkbox, FormControlLabel, IconButton, Tooltip,
-  TextField, InputAdornment,
+  TextField, InputAdornment, ToggleButtonGroup, ToggleButton,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
@@ -14,6 +14,7 @@ import type { CompareFormat, RatType, NRBandInfo, EutraBandInfo, BandCombination
 import { renderComboKey } from './comboKeyRenderer';
 import { SingleDeviceFeaturesView } from './FeaturesCompareView';
 import { BandFilterChips } from './BandFilterChips';
+import { DEVICE_COLOR, STATUS_COLOR } from '../constants/statusMeta';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -23,6 +24,8 @@ const RAT_TABS: { value: RatType; label: string }[] = [
   { value: 'eutra-nr', label: 'EUTRA-NR (MRDC)'},
   { value: 'utra',     label: 'UTRA (3G)'      },
 ];
+
+type DetailSection = 'combos' | 'bands' | 'features';
 
 
 // ─── Band table ───────────────────────────────────────────────────────────────
@@ -135,6 +138,7 @@ const BandDataRow = memo<{ band: NRBandInfo | EutraBandInfo; isNr: boolean; isEu
 });
 
 const BandTable = memo<{ bands: (NRBandInfo | EutraBandInfo)[]; ratType: RatType }>(({ bands, ratType }) => {
+  const isDark = useTheme().palette.mode === 'dark';
   const isNr = ratType === 'nr';
   const isEutra = ratType === 'eutra' || ratType === 'eutra-nr';
   const sortedBands = useMemo(() => [...bands].sort((a, b) => a.band - b.band), [bands]);
@@ -147,32 +151,60 @@ const BandTable = memo<{ bands: (NRBandInfo | EutraBandInfo)[]; ratType: RatType
     borderBottom: '1px solid', borderColor: 'divider',
   };
   return (
-    <Box sx={{ overflowX: 'auto' }}>
-      <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-        <Box component="thead">
-          <Box component="tr">
-            <Box component="th" sx={{ ...thSx, textAlign: 'left', width: 60 }}>Band</Box>
-            {isNr   && <Box component="th" sx={thSx}>Power Class</Box>}
-            {isEutra && <Box component="th" sx={thSx}>Half-Duplex</Box>}
-            <Box component="th" sx={thSx}>DL MIMO</Box>
-            <Box component="th" sx={thSx}>UL MIMO</Box>
-            <Box component="th" sx={thSx}>DL QAM</Box>
-            <Box component="th" sx={thSx}>UL QAM</Box>
-            {isEutra && <Box component="th" sx={thSx}>NC-UL-RA</Box>}
-            {isNr   && <Box component="th" sx={{ ...thSx, minWidth: 100 }}>Ch.BW DL</Box>}
-            {isNr   && <Box component="th" sx={{ ...thSx, minWidth: 100 }}>Ch.BW UL</Box>}
-            {isNr   && <Box component="th" sx={{ ...thSx, minWidth: 80 }}>NR Params</Box>}
-          </Box>
-        </Box>
-        <Box component="tbody">
-          {sortedBands.map(b => <BandDataRow key={b.band} band={b} isNr={isNr} isEutra={isEutra} />)}
-          {sortedBands.length === 0 && (
+    <Box>
+      <Box sx={{
+        position: 'sticky',
+        top: -12,
+        zIndex: 5,
+        pt: 1.5,
+        pb: 0.75,
+        mx: -1.5,
+        px: 1.5,
+        mb: 1,
+        bgcolor: isDark ? 'rgba(24,24,27,0.92)' : 'rgba(255,255,255,0.92)',
+        backdropFilter: 'blur(8px)',
+        borderBottom: '1px solid',
+        borderColor: 'divider',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}>
+        <Typography variant="caption" sx={{ fontSize: '0.68rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Band Capabilities
+        </Typography>
+        <Chip
+          size="small"
+          label={`${sortedBands.length} bands supported`}
+          sx={{ height: 18, fontSize: '0.62rem', fontWeight: 600, bgcolor: 'rgba(16,185,129,0.1)', color: STATUS_COLOR.green }}
+        />
+      </Box>
+      <Box sx={{ overflowX: 'auto' }}>
+        <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+          <Box component="thead">
             <Box component="tr">
-              <Box component="td" colSpan={10} sx={{ py: 3, textAlign: 'center', color: 'text.disabled', fontSize: '0.8rem' }}>
-                No band data
-              </Box>
+              <Box component="th" sx={{ ...thSx, textAlign: 'left', width: 60 }}>Band</Box>
+              {isNr   && <Box component="th" sx={thSx}>Power Class</Box>}
+              {isEutra && <Box component="th" sx={thSx}>Half-Duplex</Box>}
+              <Box component="th" sx={thSx}>DL MIMO</Box>
+              <Box component="th" sx={thSx}>UL MIMO</Box>
+              <Box component="th" sx={thSx}>DL QAM</Box>
+              <Box component="th" sx={thSx}>UL QAM</Box>
+              {isEutra && <Box component="th" sx={thSx}>NC-UL-RA</Box>}
+              {isNr   && <Box component="th" sx={{ ...thSx, minWidth: 100 }}>Ch.BW DL</Box>}
+              {isNr   && <Box component="th" sx={{ ...thSx, minWidth: 100 }}>Ch.BW UL</Box>}
+              {isNr   && <Box component="th" sx={{ ...thSx, minWidth: 80 }}>NR Params</Box>}
             </Box>
-          )}
+          </Box>
+          <Box component="tbody">
+            {sortedBands.map(b => <BandDataRow key={b.band} band={b} isNr={isNr} isEutra={isEutra} />)}
+            {sortedBands.length === 0 && (
+              <Box component="tr">
+                <Box component="td" colSpan={10} sx={{ py: 3, textAlign: 'center', color: 'text.disabled', fontSize: '0.8rem' }}>
+                  No band data
+                </Box>
+              </Box>
+            )}
+          </Box>
         </Box>
       </Box>
     </Box>
@@ -181,12 +213,12 @@ const BandTable = memo<{ bands: (NRBandInfo | EutraBandInfo)[]; ratType: RatType
 
 // ─── Combo list ───────────────────────────────────────────────────────────────
 
-const ComboGroup = memo<{ dlLevel: number; ulLevel: number; combos: BandCombination[]; options: ComboDisplayOptions }>(({ dlLevel, ulLevel, combos, options }) => {
+const ComboGroup = memo<{ title: string; combos: BandCombination[]; options: ComboDisplayOptions }>(({ title, combos, options }) => {
   const [open, setOpen] = useState(true);
   const isDark = useTheme().palette.mode === 'dark';
 
   return (
-    <Box sx={{ mb: 0.75 }}>
+    <Box sx={{ mb: 1 }}>
       <Box
         onClick={() => setOpen(v => !v)}
         sx={{
@@ -195,35 +227,37 @@ const ComboGroup = memo<{ dlLevel: number; ulLevel: number; combos: BandCombinat
           '&:hover': { bgcolor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' },
         }}
       >
-        <Typography variant="caption" sx={{ fontWeight: 700, fontSize: '0.72rem', color: 'text.secondary', minWidth: 70 }}>
-          {dlLevel}DL{ulLevel}UL-CA
+        <Typography variant="caption" sx={{ fontWeight: 700, fontSize: '0.72rem', color: 'text.secondary', whiteSpace: 'nowrap' }}>
+          {title}
         </Typography>
         <Box sx={{ flex: 1, height: 1, bgcolor: 'divider' }} />
-        <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.disabled' }}>
-          {combos.length}
+        <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.disabled', whiteSpace: 'nowrap' }}>
+          {combos.length} combos
         </Typography>
         {open ? <ExpandLessIcon sx={{ fontSize: 14, color: 'text.disabled' }} /> : <ExpandMoreIcon sx={{ fontSize: 14, color: 'text.disabled' }} />}
       </Box>
 
       <Collapse in={open}>
-        <Box sx={{ px: 0.5 }}>
+        <Box sx={{ mt: 0.4, px: 0.25 }}>
           {combos.map((combo, i) => {
             const displayKey = generateCombinationKey(combo, options);
             return (
               <Box key={`${displayKey}-${i}`} sx={{
-                display: 'flex', alignItems: 'center', gap: 0.75,
-                px: 1, py: 0.35, mb: 0.3,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 0.75,
+                px: 1, py: 0.5, mb: 0.4, minHeight: 26,
                 borderRadius: 1, border: '1px solid', borderColor: 'divider',
-                bgcolor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)',
+                bgcolor: isDark ? 'rgba(255,255,255,0.025)' : 'rgba(0,0,0,0.015)',
               }}>
-                <Chip
-                  label={`${dlLevel}DL${ulLevel}UL`}
-                  size="small"
-                  sx={{ height: 15, fontSize: '0.58rem', fontWeight: 700, minWidth: 50, bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)' }}
-                />
-                <Typography variant="caption" sx={{ fontFamily: 'monospace', fontSize: '0.7rem', color: 'text.primary' }}>
+                <Typography variant="caption" component="div" sx={{ fontSize: '0.76rem', color: 'text.primary', lineHeight: 1.3, overflow: 'hidden', minWidth: 0, flex: 1 }}>
                   {renderComboKey({ key: displayKey, powerClass: combo.powerClass }, options)}
                 </Typography>
+                {combo.powerClass && (
+                  <Chip
+                    label={combo.powerClass}
+                    size="small"
+                    sx={{ height: 15, fontSize: '0.58rem', fontWeight: 600, bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)', flexShrink: 0 }}
+                  />
+                )}
               </Box>
             );
           })}
@@ -233,7 +267,7 @@ const ComboGroup = memo<{ dlLevel: number; ulLevel: number; combos: BandCombinat
   );
 });
 
-const ComboList = memo<{ combos: BandCombination[]; options: ComboDisplayOptions }>(({ combos, options }) => {
+const ComboList = memo<{ combos: BandCombination[]; options: ComboDisplayOptions; ratType: RatType }>(({ combos, options, ratType }) => {
   const processedGroups = useMemo(() => {
     if (combos.length === 0) return [];
 
@@ -247,35 +281,52 @@ const ComboList = memo<{ combos: BandCombination[]; options: ComboDisplayOptions
       displayedCombos = Array.from(seen.values());
     }
 
-    // Group by CA level (DL/UL) descending
-    // Prefer FeatureSet-based CC count (dlCc/ulCc) over bandwidth class heuristic
-    const grouped = new Map<string, BandCombination[]>();
+    const isEndc = ratType === 'eutra-nr';
+    const grouped = new Map<string, { title: string; dlLevel: number; ulLevel: number; eutraDlCc: number; nrDlCc: number; combos: BandCombination[] }>();
+
     for (const c of displayedCombos) {
-      // Use FeatureSet-based CC count if available, otherwise fallback to bandwidth class
       const dlLevel = c.dlCc ?? c.bands.reduce((s: number, b: BandParameter) => s + getBwClassCcCount(b.bandwidthClassDL), 0);
       const ulLevel = c.ulCc ?? c.bands.reduce((s: number, b: BandParameter) => s + (b.bandwidthClassUL ? getBwClassCcCount(b.bandwidthClassUL) : 0), 0);
-      const key = `${dlLevel}DL${ulLevel}UL`;
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key)!.push(c);
+
+      let eutraDlCc = 0;
+      let nrDlCc = 0;
+      if (isEndc) {
+        for (const b of c.bands) {
+          const cc = getBwClassCcCount(b.bandwidthClassDL);
+          if (b.ratType === 'eutra') eutraDlCc += cc;
+          else nrDlCc += cc;
+        }
+      }
+
+      const key = isEndc
+        ? `${eutraDlCc}LTE+${nrDlCc}NR·${dlLevel}DL${ulLevel}UL`
+        : `${dlLevel}DL${ulLevel}UL`;
+      const title = isEndc
+        ? `${eutraDlCc}LTE + ${nrDlCc}NR · ${dlLevel}DL${ulLevel}UL-ENDC`
+        : `${dlLevel}DL${ulLevel}UL-CA`;
+
+      if (!grouped.has(key)) {
+        grouped.set(key, { title, dlLevel, ulLevel, eutraDlCc, nrDlCc, combos: [] });
+      }
+      grouped.get(key)!.combos.push(c);
     }
+
     return [...grouped.entries()]
-      .sort(([a], [b]) => {
-        const [aDL] = a.split('DL').map(Number);
-        const [bDL] = b.split('DL').map(Number);
-        if (bDL !== aDL) return bDL - aDL;
-        const aUL = Number(a.split('DL')[1].replace('UL', ''));
-        const bUL = Number(b.split('DL')[1].replace('UL', ''));
-        return bUL - aUL;
+      .sort(([, a], [, b]) => {
+        if (b.dlLevel !== a.dlLevel) return b.dlLevel - a.dlLevel;
+        if (b.ulLevel !== a.ulLevel) return b.ulLevel - a.ulLevel;
+        if (b.nrDlCc !== a.nrDlCc) return b.nrDlCc - a.nrDlCc;
+        return b.eutraDlCc - a.eutraDlCc;
       })
-      .map(([key, cs]) => {
-        const sortedCs = [...cs].sort((a, b) => {
+      .map(([key, g]) => {
+        const sortedCs = [...g.combos].sort((a, b) => {
           const keyA = generateCombinationKey(a, options);
           const keyB = generateCombinationKey(b, options);
           return keyA.localeCompare(keyB, undefined, { numeric: true, sensitivity: 'base' });
         });
-        return [key, sortedCs] as [string, BandCombination[]];
+        return { key, title: g.title, combos: sortedCs };
       });
-  }, [combos, options]);
+  }, [combos, options, ratType]);
 
   if (combos.length === 0) {
     return (
@@ -287,20 +338,17 @@ const ComboList = memo<{ combos: BandCombination[]; options: ComboDisplayOptions
 
   return (
     <Box>
-      {processedGroups.map(([key, cs]) => {
-        const [dlLevel, ulPart] = key.split('DL');
-        const ulLevel = ulPart.replace('UL', '');
-        return (
-        <ComboGroup key={key} dlLevel={Number(dlLevel)} ulLevel={Number(ulLevel)} combos={cs} options={options} />
-        );
-      })}
+      {processedGroups.map(({ key, title, combos: cs }) => (
+        <ComboGroup key={key} title={title} combos={cs} options={options} />
+      ))}
     </Box>
   );
 });
 
-// ─── Band combo section (filter + list) ──────────────────────────────────────
+// ─── Band combo section (sticky toolbar + list) ───────────────────────────────
 
-const BandComboSection = memo<{ combos: BandCombination[]; mt?: number }>(({ combos, mt }) => {
+const BandComboSection = memo<{ combos: BandCombination[]; ratType: RatType }>(({ combos, ratType }) => {
+  const isDark = useTheme().palette.mode === 'dark';
   const [options, setOptions] = useState<ComboDisplayOptions>({
     showQam: true, showMimo: true, mergeRedundant: true,
   });
@@ -351,42 +399,61 @@ const BandComboSection = memo<{ combos: BandCombination[]; mt?: number }>(({ com
   const isFiltered = selectedBands.size > 0 || !!deferredSearch;
 
   return (
-    <Box sx={{ mt }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
-        <Typography variant="caption" sx={{ fontSize: '0.7rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Band Combinations ({isFiltered ? `${filteredCombos.length}/` : ''}{combos.length})
-        </Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <FormControlLabel
-            control={<Checkbox size="small" checked={!!options.showQam} onChange={e => setOptions(p => ({ ...p, showQam: e.target.checked }))} sx={{ p: 0.4 }} />}
-            label={<Typography sx={{ fontSize: '0.65rem' }}>QAM</Typography>} sx={{ m: 0 }}
-          />
-          <FormControlLabel
-            control={<Checkbox size="small" checked={!!options.showMimo} onChange={e => setOptions(p => ({ ...p, showMimo: e.target.checked }))} sx={{ p: 0.4 }} />}
-            label={<Typography sx={{ fontSize: '0.65rem' }}>MIMO</Typography>} sx={{ m: 0 }}
-          />
-          <FormControlLabel
-            control={<Checkbox size="small" checked={options.mergeRedundant !== false} onChange={e => setOptions(p => ({ ...p, mergeRedundant: e.target.checked }))} sx={{ p: 0.4 }} />}
-            label={<Typography sx={{ fontSize: '0.65rem' }}>Merge</Typography>} sx={{ m: 0 }}
+    <Box>
+      {/* Sticky Filter + Display Options + Band Chips Toolbar */}
+      <Box sx={{
+        position: 'sticky',
+        top: -12,
+        zIndex: 5,
+        pt: 1.5,
+        pb: 0.75,
+        mx: -1.5,
+        px: 1.5,
+        mb: 1,
+        bgcolor: isDark ? 'rgba(24,24,27,0.92)' : 'rgba(255,255,255,0.92)',
+        backdropFilter: 'blur(8px)',
+        borderBottom: '1px solid',
+        borderColor: 'divider',
+      }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: allBands.length > 0 ? 0.75 : 0, flexWrap: 'wrap' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
+            <TextField
+              size="small"
+              placeholder="Search combo..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              slotProps={{
+                input: {
+                  startAdornment: <InputAdornment position="start"><SearchIcon sx={{ fontSize: 15, color: 'text.disabled' }} /></InputAdornment>,
+                }
+              }}
+              sx={{ width: 170, '& .MuiInputBase-input': { fontSize: '0.74rem', py: 0.4 } }}
+            />
+            <FormControlLabel
+              control={<Checkbox size="small" checked={!!options.showQam} onChange={e => setOptions(p => ({ ...p, showQam: e.target.checked }))} sx={{ p: 0.3 }} />}
+              label={<Typography sx={{ fontSize: '0.64rem' }}>QAM</Typography>} sx={{ m: 0 }}
+            />
+            <FormControlLabel
+              control={<Checkbox size="small" checked={!!options.showMimo} onChange={e => setOptions(p => ({ ...p, showMimo: e.target.checked }))} sx={{ p: 0.3 }} />}
+              label={<Typography sx={{ fontSize: '0.64rem' }}>MIMO</Typography>} sx={{ m: 0 }}
+            />
+            <FormControlLabel
+              control={<Checkbox size="small" checked={options.mergeRedundant !== false} onChange={e => setOptions(p => ({ ...p, mergeRedundant: e.target.checked }))} sx={{ p: 0.3 }} />}
+              label={<Typography sx={{ fontSize: '0.64rem' }}>Merge</Typography>} sx={{ m: 0 }}
+            />
+          </Box>
+          <Chip
+            size="small"
+            label={isFiltered ? `${filteredCombos.length} / ${combos.length} combos` : `${combos.length} combos`}
+            sx={{ height: 18, fontSize: '0.62rem', fontWeight: 600, bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)' }}
           />
         </Box>
+        {allBands.length > 0 && (
+          <BandFilterChips allBands={allBands} selected={selectedBands} onToggle={toggleBand} onClear={() => setSelectedBands(new Set())} />
+        )}
       </Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1, minWidth: 0 }}>
-        <TextField
-          size="small"
-          placeholder="Search..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          slotProps={{
-            input: {
-              startAdornment: <InputAdornment position="start"><SearchIcon sx={{ fontSize: 14, color: 'text.disabled' }} /></InputAdornment>
-            }
-          }}
-          sx={{ flexShrink: 0, width: 130, '& .MuiInputBase-input': { fontSize: '0.72rem', py: 0.4 } }}
-        />
-        <BandFilterChips allBands={allBands} selected={selectedBands} onToggle={toggleBand} onClear={() => setSelectedBands(new Set())} />
-      </Box>
-      <ComboList combos={filteredCombos} options={options} />
+
+      <ComboList combos={filteredCombos} options={options} ratType={ratType} />
     </Box>
   );
 });
@@ -397,46 +464,98 @@ interface SingleDeviceViewProps {
   device: CompareFormat;
   side: 'A' | 'B';
   onOpenUrl?: (url: string) => void;
+  hideHeader?: boolean;
 }
 
-export const SingleDeviceView: React.FC<SingleDeviceViewProps> = ({ device, side, onOpenUrl }) => {
+export const SingleDeviceView: React.FC<SingleDeviceViewProps> = ({ device, side, onOpenUrl, hideHeader = false }) => {
   const isDark = useTheme().palette.mode === 'dark';
-  const sideColor = side === 'A' ? '#2196F3' : '#4DB6AC';
+  const sideColor = side === 'A' ? DEVICE_COLOR.deviceA : DEVICE_COLOR.deviceB;
 
-  const availableRats = RAT_TABS.filter(t => device.rats[t.value]);
+  const availableRats = useMemo(
+    () => RAT_TABS.filter(t => Boolean(device.rats[t.value])),
+    [device.rats]
+  );
   const [activeRat, setActiveRat] = useState<RatType>(availableRats[0]?.value ?? 'nr');
+  const [sectionByRat, setSectionByRat] = useState<Partial<Record<RatType, DetailSection>>>({});
+
+  const activeRatValue = useMemo(
+    () => availableRats.find(t => t.value === activeRat)?.value ?? availableRats[0]?.value,
+    [availableRats, activeRat]
+  );
+
+  const activeRatInfo = activeRatValue ? device.rats[activeRatValue] : undefined;
+  const activeRatFeatures = activeRatValue ? device.features?.[activeRatValue] : undefined;
+
+  const sectionMeta = useMemo(() => {
+    const comboCount = activeRatInfo?.bandCombinations.length ?? 0;
+    const bandCount = activeRatInfo?.bands.length ?? 0;
+    const featureCount = activeRatFeatures?.leaves.length ?? 0;
+    return {
+      combos: { count: comboCount, available: comboCount > 0 },
+      bands: { count: bandCount, available: bandCount > 0 },
+      features: { count: featureCount, available: featureCount > 0 },
+    };
+  }, [activeRatInfo, activeRatFeatures]);
+
+  const defaultSection: DetailSection = sectionMeta.combos.available
+    ? 'combos'
+    : sectionMeta.bands.available
+      ? 'bands'
+      : 'features';
+
+  const savedSection = activeRatValue ? sectionByRat[activeRatValue] : undefined;
+  const activeSection: DetailSection =
+    savedSection && sectionMeta[savedSection].available ? savedSection : defaultSection;
+
+  const handleSectionChange = useCallback((_: React.MouseEvent<HTMLElement>, next: DetailSection | null) => {
+    if (!next || !activeRatValue) return;
+    setSectionByRat(prev => ({ ...prev, [activeRatValue]: next }));
+  }, [activeRatValue]);
+
+  const hasActiveData = Boolean(
+    activeRatInfo &&
+    (activeRatInfo.bands.length > 0 ||
+      activeRatInfo.bandCombinations.length > 0 ||
+      (activeRatFeatures?.leaves.length ?? 0) > 0)
+  );
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, height: '100%', minHeight: 0 }}>
-      {/* Header info */}
-      <Box sx={{
-        flexShrink: 0,
-        p: 1.5, borderRadius: 2, border: '1px solid', borderColor: `${sideColor}44`,
-        bgcolor: isDark ? `${sideColor}0d` : `${sideColor}08`,
-        display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap',
-      }}>
-        <Typography variant="caption" sx={{ fontWeight: 700, fontSize: '0.72rem', color: sideColor, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          Device {side}
-        </Typography>
-        <Chip label={device.meta.vendor} size="small" sx={{ height: 18, fontSize: '0.65rem', fontWeight: 700, color: sideColor, bgcolor: `${sideColor}22`, border: `1px solid ${sideColor}55` }} />
-        {device.meta.detectedRats.map(r => (
-          <Chip key={r} label={r.toUpperCase()} size="small" sx={{ height: 16, fontSize: '0.6rem', bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)' }} />
-        ))}
-        <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.disabled' }}>
-          {device.meta.fileName}
-        </Typography>
-        <Tooltip title="Export to Excel" placement="top">
-          <IconButton
-            size="small"
-            onClick={() => void exportSingleDeviceToExcelCompat(device, side)}
-            sx={{ ml: 'auto', color: 'text.disabled', '&:hover': { color: 'primary.main' } }}
-          >
-            <DownloadIcon sx={{ fontSize: 16 }} />
-          </IconButton>
-        </Tooltip>
-      </Box>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, height: '100%', minHeight: 0 }}>
+      {/* Optional standalone header when not embedded inside CapaComparePage */}
+      {!hideHeader && (
+        <Paper
+          elevation={0}
+          sx={{
+            flexShrink: 0,
+            px: 1.5, py: 0.75,
+            border: '1px solid', borderColor: `${sideColor}44`, borderRadius: 2.5,
+            bgcolor: isDark ? `${sideColor}0d` : `${sideColor}08`,
+            display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap',
+          }}
+        >
+          <Typography variant="caption" sx={{ fontWeight: 800, fontSize: '0.72rem', color: sideColor, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Device {side}
+          </Typography>
+          <Chip label={device.meta.vendor} size="small" sx={{ height: 18, fontSize: '0.62rem', fontWeight: 700, color: sideColor, bgcolor: `${sideColor}22`, border: `1px solid ${sideColor}55` }} />
+          {device.meta.detectedRats.map(r => (
+            <Chip key={r} label={r.toUpperCase()} size="small" sx={{ height: 16, fontSize: '0.6rem', bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)' }} />
+          ))}
+          <Typography variant="caption" sx={{ fontSize: '0.7rem', color: 'text.secondary', fontWeight: 600 }}>
+            {device.meta.deviceName || device.meta.fileName}
+          </Typography>
+          <Tooltip title="Export to Excel" placement="top">
+            <IconButton
+              size="small"
+              onClick={() => void exportSingleDeviceToExcelCompat(device, side)}
+              sx={{ ml: 'auto', color: 'text.disabled', '&:hover': { color: 'primary.main' } }}
+            >
+              <DownloadIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+        </Paper>
+      )}
 
-      {/* RAT tabs + content */}
+      {/* Unified RAT tabs (left) + Sub-Tab Segmented Switch (right) */}
       <Paper elevation={0} sx={{
         border: '1px solid', borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', borderRadius: 3,
         overflow: 'hidden',
@@ -445,63 +564,122 @@ export const SingleDeviceView: React.FC<SingleDeviceViewProps> = ({ device, side
         boxShadow: '0 4px 24px rgba(0,0,0,0.02)',
         flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
       }}>
-        <Box sx={{ borderBottom: '1px solid', borderColor: 'divider', px: 1 }}>
+        <Box sx={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          borderBottom: '1px solid', borderColor: 'divider', px: 1, py: 0.25, gap: 1, flexWrap: 'wrap',
+        }}>
           <Tabs
-            value={availableRats.find(t => t.value === activeRat) ? activeRat : availableRats[0]?.value ?? false}
+            value={activeRatValue ?? false}
             onChange={(_, v) => setActiveRat(v as RatType)}
             sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, py: 0, fontSize: '0.75rem', textTransform: 'none' } }}
           >
-            {availableRats.map(({ value, label }) => (
-              <Tab key={value} value={value} label={label} />
-            ))}
+            {availableRats.map(({ value, label }) => {
+              const comboCount = device.rats[value]?.bandCombinations.length ?? 0;
+              return (
+                <Tab
+                  key={value}
+                  value={value}
+                  label={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <span>{label}</span>
+                      {comboCount > 0 && (
+                        <Chip
+                          label={comboCount}
+                          size="small"
+                          sx={{ height: 16, fontSize: '0.62rem', fontWeight: 600, bgcolor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
+                        />
+                      )}
+                    </Box>
+                  }
+                />
+              );
+            })}
           </Tabs>
+
+          {activeRatInfo && (
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={activeSection}
+              onChange={handleSectionChange}
+              sx={{
+                '& .MuiToggleButton-root': {
+                  py: 0.25, px: 1, fontSize: '0.68rem', fontWeight: 600,
+                  textTransform: 'none', minHeight: 26, gap: 0.5,
+                },
+              }}
+            >
+              {sectionMeta.combos.available && (
+                <ToggleButton value="combos">
+                  <span>Combos</span>
+                  <Chip
+                    size="small"
+                    label={sectionMeta.combos.count}
+                    sx={{ height: 15, fontSize: '0.58rem', fontWeight: 700, bgcolor: 'rgba(33,150,243,0.12)', color: DEVICE_COLOR.deviceA }}
+                  />
+                </ToggleButton>
+              )}
+              {sectionMeta.bands.available && (
+                <ToggleButton value="bands">
+                  <span>Bands</span>
+                  <Chip
+                    size="small"
+                    label={sectionMeta.bands.count}
+                    sx={{ height: 15, fontSize: '0.58rem', fontWeight: 700, bgcolor: 'rgba(16,185,129,0.12)', color: STATUS_COLOR.green }}
+                  />
+                </ToggleButton>
+              )}
+              {sectionMeta.features.available && (
+                <ToggleButton value="features">
+                  <span>Features</span>
+                  <Chip
+                    size="small"
+                    label={sectionMeta.features.count}
+                    sx={{ height: 15, fontSize: '0.58rem', fontWeight: 700, bgcolor: 'rgba(99,102,241,0.12)', color: STATUS_COLOR.indigo }}
+                  />
+                </ToggleButton>
+              )}
+            </ToggleButtonGroup>
+          )}
         </Box>
 
-        {availableRats.length > 0 && availableRats.map(({ value }) => {
-          const ratInfo = device.rats[value];
-          if (!ratInfo) return null;
-          
-          return (
-            <Box key={value} sx={{ p: 2, flex: 1, minHeight: 0, overflowY: 'auto', display: activeRat === value ? 'block' : 'none' }}>
-              {/* Band capabilities */}
-              {ratInfo.bands.length > 0 && (
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="caption" sx={{ fontSize: '0.7rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', mb: 1 }}>
-                    Band Capabilities ({ratInfo.bands.length})
-                  </Typography>
-                  <BandTable bands={ratInfo.bands as (NRBandInfo | EutraBandInfo)[]} ratType={value as RatType} />
-                </Box>
+        {availableRats.length > 0 && activeRatValue && activeRatInfo ? (
+          hasActiveData ? (
+            <Box key={activeRatValue} sx={{ p: 1.5, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+              {activeSection === 'combos' && (
+                <BandComboSection
+                  key={`single-combos-${activeRatValue}`}
+                  combos={activeRatInfo.bandCombinations}
+                  ratType={activeRatValue}
+                />
               )}
 
-              {/* Band combinations */}
-              {ratInfo.bandCombinations.length > 0 && (
-                <BandComboSection combos={ratInfo.bandCombinations} mt={ratInfo.bands.length > 0 ? 2 : 0} />
+              {activeSection === 'bands' && (
+                <BandTable
+                  key={`single-bands-${activeRatValue}`}
+                  bands={activeRatInfo.bands as (NRBandInfo | EutraBandInfo)[]}
+                  ratType={activeRatValue}
+                />
               )}
 
-              {/* Features */}
-              {(() => {
-                const ratFeatures = device.features?.[value as RatType];
-                if (!ratFeatures || ratFeatures.leaves.length === 0) return null;
-                const hasPrev = ratInfo.bands.length > 0 || ratInfo.bandCombinations.length > 0;
-                return (
-                  <>
-                    {hasPrev && <Divider sx={{ my: 2 }} />}
-                    <Typography variant="caption" sx={{ fontSize: '0.7rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', mb: 1 }}>
-                      Features ({ratFeatures.leaves.length})
-                    </Typography>
-                    <SingleDeviceFeaturesView leaves={ratFeatures.leaves} onOpenUrl={onOpenUrl} />
-                  </>
-                );
-              })()}
-
-              {ratInfo.bands.length === 0 && ratInfo.bandCombinations.length === 0 && !device.features?.[value as RatType]?.leaves.length && (
-                <Box sx={{ py: 3, textAlign: 'center', color: 'text.disabled' }}>
-                  <Typography variant="body2">No data for this RAT</Typography>
-                </Box>
+              {activeSection === 'features' && activeRatFeatures && (
+                <SingleDeviceFeaturesView
+                  key={`single-features-${activeRatValue}`}
+                  leaves={activeRatFeatures.leaves}
+                  onOpenUrl={onOpenUrl}
+                />
               )}
             </Box>
-          );
-        })}
+          ) : (
+            <Box sx={{ py: 3, textAlign: 'center', color: 'text.disabled' }}>
+              <Typography variant="body2">No data for this RAT</Typography>
+            </Box>
+          )
+        ) : (
+          <Box sx={{ py: 4, textAlign: 'center', color: 'text.disabled' }}>
+            <Typography variant="body2">No RAT data available</Typography>
+          </Box>
+        )}
       </Paper>
     </Box>
   );
