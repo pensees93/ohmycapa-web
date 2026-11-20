@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   compareCapaFormats,
+  formatExportBaseName,
   generateCombinationKey,
   getBwClassCcCount,
   type CommonCapaJson,
@@ -557,5 +558,15 @@ describe('Stage 3 Compare & Key Generation Unit Tests', () => {
     const compoundDiff = compareCapaFormats(devCompoundA, devCompoundB).ratResults.eutra?.comboDiffs.find((d) => d.b);
     expect(compoundDiff?.status).toBe('b-only-covered');
     expect(compoundDiff?.paramNotes).toContain('UL B3 carrier added coverage (1UL→2UL)');
+  });
+
+  it('builds clean export base names without leaking raw .txt/.log/.json extensions', () => {
+    expect(formatExportBaseName({ deviceName: 'X846N_SKT_all_260421', fileName: 'X846N_SKT_all_260421.txt' })).toBe('X846N_SKT_all_260421');
+    expect(formatExportBaseName({ deviceName: '', fileName: 'X846N_SKT_all_260421.txt' })).toBe('X846N_SKT_all_260421');
+    expect(formatExportBaseName({ fileName: 'capture.LOG' })).toBe('capture');
+    expect(formatExportBaseName({ fileName: 'parsed.json' })).toBe('parsed');
+    expect(formatExportBaseName({ deviceName: 'S25.v2.1.txt' })).toBe('S25.v2.1');
+    expect(formatExportBaseName({ deviceName: '갤럭시 S25:a/b' })).toBe('갤럭시_S25_a_b');
+    expect(formatExportBaseName({ deviceName: '', fileName: '.txt' }, 'DeviceA')).toBe('DeviceA');
   });
 });

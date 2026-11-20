@@ -112,6 +112,7 @@ export {
   buildSingleDeviceWorkbook,
   exportCapaCompareToExcel,
   exportSingleDeviceToExcel,
+  formatExportBaseName,
   serializeCommonCapaJson,
 } from './compare/capaExport';
 export {

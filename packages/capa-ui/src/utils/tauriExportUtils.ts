@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx-js-style';
 import {
   buildCapaCompareWorkbook,
   buildSingleDeviceWorkbook,
+  formatExportBaseName,
   serializeCommonCapaJson,
 } from '@ohmycapa/capa-core';
 import type { CapaCompareResult, CommonCapaJson, CompareFormat } from '@ohmycapa/capa-core';
@@ -33,8 +34,8 @@ async function saveFile(wb: XLSX.WorkBook, fileName: string): Promise<void> {
 
 export async function exportCapaCompareToExcelCompat(result: CapaCompareResult): Promise<void> {
   const wb = await buildCapaCompareWorkbook(result);
-  const deviceAName = result.meta.deviceA.fileName;
-  const deviceBName = result.meta.deviceB.fileName;
+  const deviceAName = formatExportBaseName(result.meta.deviceA, 'DeviceA');
+  const deviceBName = formatExportBaseName(result.meta.deviceB, 'DeviceB');
   await saveFile(wb, `CAPA_Compare_${deviceAName}_vs_${deviceBName}.xlsx`);
 }
 
@@ -43,9 +44,9 @@ export async function exportSingleDeviceToExcelCompat(
   side?: 'A' | 'B'
 ): Promise<void> {
   const wb = await buildSingleDeviceWorkbook(device);
-  const { fileName } = device.meta;
+  const baseName = formatExportBaseName(device.meta, 'Device');
   const sideTag = side ? `Device${side}_` : 'Device_';
-  await saveFile(wb, `CAPA_${sideTag}${fileName}.xlsx`);
+  await saveFile(wb, `CAPA_${sideTag}${baseName}.xlsx`);
 }
 
 export async function exportCommonJsonCompat(
@@ -53,8 +54,7 @@ export async function exportCommonJsonCompat(
   side?: 'A' | 'B'
 ): Promise<void> {
   const jsonText = serializeCommonCapaJson(data);
-  const baseName = data.meta.deviceName || data.meta.fileName || 'Device';
-  const safeBase = baseName.replace(/[^a-zA-Z0-9._-]+/g, '_');
+  const safeBase = formatExportBaseName(data.meta, 'Device');
   const sideTag = side ? `Device${side}_` : 'Device_';
   const fileName = `CAPA_${sideTag}${safeBase}.json`;
 
@@ -78,8 +78,8 @@ export function exportSessionSnapshot(
   deviceA: CommonCapaJson,
   deviceB: CommonCapaJson
 ): void {
-  const safeA = (deviceA.meta.deviceName || deviceA.meta.fileName || 'DeviceA').replace(/[^a-zA-Z0-9._-]+/g, '_');
-  const safeB = (deviceB.meta.deviceName || deviceB.meta.fileName || 'DeviceB').replace(/[^a-zA-Z0-9._-]+/g, '_');
+  const safeA = formatExportBaseName(deviceA.meta, 'DeviceA');
+  const safeB = formatExportBaseName(deviceB.meta, 'DeviceB');
   const payload = {
     formatVersion: 'ohmycapa-session-v1' as const,
     exportedAt: new Date().toISOString(),

@@ -313,10 +313,30 @@ export async function buildCapaCompareWorkbook(result: CapaCompareResult): Promi
   return wb;
 }
 
+/**
+ * Build a clean filename stem from device metadata: prefers deviceName over fileName,
+ * strips trailing raw log/JSON extensions (.txt/.log/.json), and replaces filesystem-unsafe
+ * characters and whitespace with underscores.
+ */
+export function formatExportBaseName(
+  meta: { deviceName?: string; fileName?: string },
+  fallback = 'Device',
+): string {
+  const raw = (meta.deviceName?.trim() || meta.fileName?.trim() || fallback)
+    .replace(/\.(txt|log|json)$/i, '');
+  // Map ASCII control characters before the regex pass to keep ESLint no-control-regex happy.
+  const withoutControls = Array.from(raw, (ch) => (ch.charCodeAt(0) < 0x20 ? '*' : ch)).join('');
+  const sanitized = withoutControls
+    .replace(/[<>:"/\\|?*]+/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/^[_.\s]+|[_.\s]+$/g, '');
+  return sanitized || fallback;
+}
+
 export async function exportCapaCompareToExcel(result: CapaCompareResult): Promise<void> {
   const wb = await buildCapaCompareWorkbook(result);
-  const deviceAName = result.meta.deviceA.fileName;
-  const deviceBName = result.meta.deviceB.fileName;
+  const deviceAName = formatExportBaseName(result.meta.deviceA, 'DeviceA');
+  const deviceBName = formatExportBaseName(result.meta.deviceB, 'DeviceB');
   const fileName = `CAPA_Compare_${deviceAName}_vs_${deviceBName}.xlsx`;
   XLSX.writeFile(wb, fileName);
 }
@@ -454,9 +474,9 @@ export async function buildSingleDeviceWorkbook(device: CompareFormat): Promise<
 
 export async function exportSingleDeviceToExcel(device: CompareFormat, side?: 'A' | 'B'): Promise<void> {
   const wb = await buildSingleDeviceWorkbook(device);
-  const { fileName } = device.meta;
+  const baseName = formatExportBaseName(device.meta, 'Device');
   const sideTag = side ? `Device${side}_` : 'Device_';
-  XLSX.writeFile(wb, `CAPA_${sideTag}${fileName}.xlsx`);
+  XLSX.writeFile(wb, `CAPA_${sideTag}${baseName}.xlsx`);
 }
 
 /**
