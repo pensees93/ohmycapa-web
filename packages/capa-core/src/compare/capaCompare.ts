@@ -247,57 +247,226 @@ function buildComboCache(combo: BandCombination): ComboCache {
   };
 }
 
+const CONTIGUOUS_BW_CHAIN = ['a', 'c', 'd', 'e', 'f', 'g', 'h', 'i'] as const;
+
 /**
- * Determine if small is a subset of large (cache-based)
- * - Only check band set inclusion (including duplicates). Parameters are recorded as warnings (paramNotes).
+ * 3GPP TS 36.101 Table 5.6A.1-1 / TS 36.306 §4.3.5.12 / TS 38.306 §4.2.7.10:
+ * A parent CA bandwidth class covers an equal or smaller contiguous fallback class
+ * (e.g. c -> a, d -> c -> a, b -> a), never a larger one (a cannot cover c or b).
+ */
+function bwClassCovers(smallCls: string | undefined, largeCls: string | undefined): boolean {
+  const s = (smallCls || 'a').toLowerCase();
+  const l = (largeCls || 'a').toLowerCase();
+  if (s === l) return true;
+  if (s === 'a' && l === 'b') return true;
+  const sIdx = CONTIGUOUS_BW_CHAIN.indexOf(s as (typeof CONTIGUOUS_BW_CHAIN)[number]);
+  const lIdx = CONTIGUOUS_BW_CHAIN.indexOf(l as (typeof CONTIGUOUS_BW_CHAIN)[number]);
+  return sIdx >= 0 && lIdx >= 0 && lIdx >= sIdx;
+}
+
+function bandEntryCovers(
+  s: BandParameter,
+  l: BandParameter,
+  opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {},
+  requireSameDlBwClass = false
+): boolean {
+  if (s.ratType !== l.ratType || s.band !== l.band) return false;
+  const { showQam = true, showMimo = true } = opts;
+
+  // 1. DL Bandwidth Class dominance
+  if (requireSameDlBwClass) {
+    if ((s.bandwidthClassDL || 'a').toLowerCase() !== (l.bandwidthClassDL || 'a').toLowerCase()) {
+      return false;
+    }
+  } else if (!bwClassCovers(s.bandwidthClassDL, l.bandwidthClassDL)) {
+    return false;
+  }
+
+  // 2. UL Carrier & UL Bandwidth Class dominance
+  if (s.bandwidthClassUL) {
+    if (!l.bandwidthClassUL) return false;
+    if (!bwClassCovers(s.bandwidthClassUL, l.bandwidthClassUL)) return false;
+  }
+
+  // 3. Per-entry DL/UL MIMO & QAM dominance
+  if (showMimo) {
+    if ((l.dlMimo ?? 0) < (s.dlMimo ?? 0)) return false;
+    if (s.bandwidthClassUL && (l.ulMimo ?? 1) < (s.ulMimo ?? 1)) return false;
+  }
+  if (showQam) {
+    if (qamRank(l.dlQam) < qamRank(s.dlQam)) return false;
+    if (s.bandwidthClassUL && qamRank(l.ulQam) < qamRank(s.ulQam)) return false;
+  }
+
+  return true;
+}
+
+interface MatchedBandPair {
+  s: BandParameter;
+  l: BandParameter;
+}
+
+/**
+ * Finds a 1-to-1 matching from each BandParameter in smallBands to a distinct
+ * BandParameter in largeBands satisfying bandEntryCovers(s, l, opts).
+ */
+function matchCoveringBandEntries(
+  smallBands: BandParameter[],
+  largeBands: BandParameter[],
+  opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {},
+  requireSameDlBwClass = false
+): MatchedBandPair[] | null {
+  if (smallBands.length > largeBands.length) return null;
+
+  const sGroups = new Map<string, BandParameter[]>();
+  const lGroups = new Map<string, BandParameter[]>();
+
+  for (const b of smallBands) {
+    const k = `${b.ratType}:${b.band}`;
+    const arr = sGroups.get(k);
+    if (arr) arr.push(b);
+    else sGroups.set(k, [b]);
+  }
+  for (const b of largeBands) {
+    const k = `${b.ratType}:${b.band}`;
+    const arr = lGroups.get(k);
+    if (arr) arr.push(b);
+    else lGroups.set(k, [b]);
+  }
+
+  for (const [k, sList] of sGroups) {
+    const lList = lGroups.get(k);
+    if (!lList || lList.length < sList.length) return null;
+  }
+
+  const entryScore = (b: BandParameter) =>
+    (b.bandwidthClassUL ? 1000 : 0) +
+    getBwClassCcCount(b.bandwidthClassDL) * 100 +
+    (b.dlMimo ?? 0) * 10 +
+    qamRank(b.dlQam);
+
+  const matched: MatchedBandPair[] = [];
+
+  for (const [k, rawSList] of sGroups) {
+    const rawLList = lGroups.get(k)!;
+    if (rawSList.length === 1 && rawLList.length === 1) {
+      if (!bandEntryCovers(rawSList[0], rawLList[0], opts, requireSameDlBwClass)) return null;
+      matched.push({ s: rawSList[0], l: rawLList[0] });
+      continue;
+    }
+
+    const sList = [...rawSList].sort((a, b) => entryScore(b) - entryScore(a));
+    const lList = [...rawLList].sort((a, b) => entryScore(b) - entryScore(a));
+    const usedL = new Array<boolean>(lList.length).fill(false);
+    const groupPairs: MatchedBandPair[] = [];
+
+    const backtrack = (sIdx: number): boolean => {
+      if (sIdx === sList.length) return true;
+      const sEntry = sList[sIdx];
+      for (let lIdx = 0; lIdx < lList.length; lIdx++) {
+        if (usedL[lIdx]) continue;
+        if (bandEntryCovers(sEntry, lList[lIdx], opts, requireSameDlBwClass)) {
+          usedL[lIdx] = true;
+          groupPairs.push({ s: sEntry, l: lList[lIdx] });
+          if (backtrack(sIdx + 1)) return true;
+          groupPairs.pop();
+          usedL[lIdx] = false;
+        }
+      }
+      return false;
+    };
+
+    if (!backtrack(0)) return null;
+    matched.push(...groupPairs);
+  }
+
+  return matched;
+}
+
+function collectCoverageParamNotes(
+  pairs: MatchedBandPair[],
+  opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {}
+): string[] {
+  const { showQam = true, showMimo = true } = opts;
+  const notes: string[] = [];
+
+  for (const { s, l } of pairs) {
+    const prefix = s.ratType === 'nr' ? `n${s.band}` : `B${s.band}`;
+    const sDlCls = s.bandwidthClassDL ?? 'a';
+    const lDlCls = l.bandwidthClassDL ?? 'a';
+    if (sDlCls.toLowerCase() !== lDlCls.toLowerCase()) {
+      notes.push(`${prefix} DL-class: ${sDlCls}→${lDlCls}`);
+    }
+    if (showMimo && (l.dlMimo ?? 0) > (s.dlMimo ?? 0) && l.dlMimo !== undefined) {
+      notes.push(`${prefix} DL-MIMO: ${s.dlMimo ?? '—'}→${l.dlMimo}`);
+    }
+    if (showQam && qamRank(l.dlQam) > qamRank(s.dlQam)) {
+      const sLabel = QAM_LABELS[qamRank(s.dlQam)] || String(s.dlQam ?? '64QAM');
+      const lLabel = QAM_LABELS[qamRank(l.dlQam)] || String(l.dlQam ?? '');
+      notes.push(`${prefix} DL-QAM: ${sLabel}→${lLabel}`);
+    }
+    if (s.bandwidthClassUL && l.bandwidthClassUL) {
+      if (s.bandwidthClassUL.toLowerCase() !== l.bandwidthClassUL.toLowerCase()) {
+        notes.push(`${prefix} UL-class: ${s.bandwidthClassUL}→${l.bandwidthClassUL}`);
+      }
+      const sUlMimo = s.ulMimo ?? 1;
+      const lUlMimo = l.ulMimo ?? 1;
+      if (showMimo && lUlMimo > sUlMimo) {
+        notes.push(`${prefix} UL-MIMO: ${sUlMimo}→${lUlMimo}`);
+      }
+      if (showQam && qamRank(l.ulQam) > qamRank(s.ulQam)) {
+        const sLabel = QAM_LABELS[qamRank(s.ulQam)] || String(s.ulQam ?? '64QAM');
+        const lLabel = QAM_LABELS[qamRank(l.ulQam)] || String(l.ulQam ?? '');
+        notes.push(`${prefix} UL-QAM: ${sLabel}→${lLabel}`);
+      }
+    }
+  }
+
+  return notes;
+}
+
+/**
+ * Determine if small is a strict 3GPP fallback subset of large (cache-based).
+ * Enforces per-band DL BW class containment, UL carrier + UL BW class containment,
+ * and per-entry MIMO/QAM dominance.
  */
 function isSubsetCombo(
   smallCache: ComboCache,
-  largeCache: ComboCache
+  largeCache: ComboCache,
+  opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {}
 ): { isSubset: boolean; paramNotes: string[] } {
   if (smallCache.caLevel >= largeCache.caLevel) return { isSubset: false, paramNotes: [] };
+  if (smallCache.ulLevel > largeCache.ulLevel) return { isSubset: false, paramNotes: [] };
 
-  // Check if all small bands exist in large using a counter
-  const largeCounter = { ...largeCache.bandCounts };
-  for (const fp of smallCache.bandFPs) {
-    const k = `${fp.ratType}:${fp.band}`;
-    if (!largeCounter[k] || largeCounter[k] <= 0) return { isSubset: false, paramNotes: [] };
-    largeCounter[k]--;
+  for (const [k, count] of Object.entries(smallCache.bandCounts)) {
+    if ((largeCache.bandCounts[k] ?? 0) < count) return { isSubset: false, paramNotes: [] };
+  }
+  for (const [k, count] of Object.entries(smallCache.ulCounts.m)) {
+    if ((largeCache.ulCounts.m[k] ?? 0) < count) return { isSubset: false, paramNotes: [] };
   }
 
-  // Collect parameter warnings
-  const paramNotes: string[] = [];
-  for (const sBand of smallCache.combo.bands) {
-    const lBand = largeCache.combo.bands.find(
-      lb => lb.ratType === sBand.ratType && lb.band === sBand.band
-    );
-    if (!lBand) continue;
-    const prefix = sBand.ratType === 'nr' ? `n${sBand.band}` : `B${sBand.band}`;
-    if (sBand.bandwidthClassDL && lBand.bandwidthClassDL && sBand.bandwidthClassDL !== lBand.bandwidthClassDL) {
-      paramNotes.push(`${prefix} DL-class: ${sBand.bandwidthClassDL}→${lBand.bandwidthClassDL}`);
-    }
-    if (sBand.dlMimo !== undefined && lBand.dlMimo !== undefined && sBand.dlMimo !== lBand.dlMimo) {
-      paramNotes.push(`${prefix} DL-MIMO: ${sBand.dlMimo}→${lBand.dlMimo}`);
-    }
-  }
+  const pairs = matchCoveringBandEntries(smallCache.combo.bands, largeCache.combo.bands, opts, false);
+  if (!pairs) return { isSubset: false, paramNotes: [] };
 
-  return { isSubset: true, paramNotes };
+  return { isSubset: true, paramNotes: collectCoverageParamNotes(pairs, opts) };
 }
 
 /**
  * UL carrier subset coverage (3GPP TS 36.101 §5.5A / TS 36.306 §4.3.5.12)
  *
- * Between two combos with the same DL band set, the one with more UL carriers
- * covers the one with fewer.
+ * Between two combos with the same DL band & BW class set, the one with more UL carriers
+ * covers the one with fewer if all existing DL/UL entries also dominate MIMO/QAM.
  */
 function isUlCoveredCombo(
   fewerCache: ComboCache,
-  moreCache: ComboCache
+  moreCache: ComboCache,
+  opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {}
 ): { isCovered: boolean; paramNotes: string[] } {
   if (fewerCache.caLevel !== moreCache.caLevel) return { isCovered: false, paramNotes: [] };
 
   // O(1) fingerprint check — return immediately if band multisets differ
   if (fewerCache.bandFingerprint !== moreCache.bandFingerprint) return { isCovered: false, paramNotes: [] };
+  if (fewerCache.combo.bands.length !== moreCache.combo.bands.length) return { isCovered: false, paramNotes: [] };
 
   const fewer = fewerCache.ulCounts;
   const more = moreCache.ulCounts;
@@ -308,31 +477,10 @@ function isUlCoveredCombo(
     if ((more.m[k] ?? 0) < count) return { isCovered: false, paramNotes: [] };
   }
 
-  const paramNotes: string[] = [];
-  const mapsToCompare = [
-    { fewer: fewerCache.mimoMap, more: moreCache.mimoMap, label: 'DL-MIMO' },
-    { fewer: fewerCache.dlQamMap, more: moreCache.dlQamMap, label: 'DL-QAM' },
-  ];
+  const pairs = matchCoveringBandEntries(fewerCache.combo.bands, moreCache.combo.bands, opts, true);
+  if (!pairs) return { isCovered: false, paramNotes: [] };
 
-  for (const { fewer: fMap, more: mMap, label } of mapsToCompare) {
-    for (const [bandKey, fVals] of Object.entries(fMap)) {
-      const mVals = mMap[bandKey];
-      if (!mVals) continue;
-      for (let i = 0; i < Math.min(fVals.length, mVals.length); i++) {
-        if (fVals[i] !== mVals[i]) {
-          const [rat, band, bwClass] = bandKey.split(':');
-          const prefix = rat === 'nr' ? `n${band}` : `B${band}`;
-          let fValStr = String(fVals[i]);
-          let mValStr = String(mVals[i]);
-          if (label.includes('QAM')) {
-            fValStr = QAM_LABELS[fVals[i]] || fValStr;
-            mValStr = QAM_LABELS[mVals[i]] || mValStr;
-          }
-          paramNotes.push(`${prefix}(${bwClass}) ${label}: ${fValStr}→${mValStr}`);
-        }
-      }
-    }
-  }
+  const paramNotes = collectCoverageParamNotes(pairs, opts);
 
   const extraUl = Object.keys(more.m)
     .filter(k => (more.m[k] ?? 0) > (fewer.m[k] ?? 0))
@@ -393,18 +541,24 @@ function mimoCovers(weakerMimos: number[], strongerMimos: number[]): boolean {
  */
 function isParamCoveredCombo(
   weakerCache: ComboCache,
-  strongerCache: ComboCache
+  strongerCache: ComboCache,
+  opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {}
 ): { isCovered: boolean; paramNotes: string[] } {
   if (weakerCache.caLevel !== strongerCache.caLevel) return { isCovered: false, paramNotes: [] };
 
   // O(1) fingerprint check
   if (weakerCache.bandFingerprint !== strongerCache.bandFingerprint) return { isCovered: false, paramNotes: [] };
+  if (weakerCache.combo.bands.length !== strongerCache.combo.bands.length) return { isCovered: false, paramNotes: [] };
 
   const weakerUL = weakerCache.ulCounts;
   const strongerUL = strongerCache.ulCounts;
   if (weakerUL.total !== strongerUL.total) return { isCovered: false, paramNotes: [] };
   for (const [k, count] of Object.entries(weakerUL.m)) {
     if ((strongerUL.m[k] ?? 0) !== count) return { isCovered: false, paramNotes: [] };
+  }
+
+  if (!matchCoveringBandEntries(weakerCache.combo.bands, strongerCache.combo.bands, opts, true)) {
+    return { isCovered: false, paramNotes: [] };
   }
 
   // Multiset parameter coverage check (sorted array per band type)
@@ -686,7 +840,7 @@ function compareCombos(
       // Subset: search B combos with strictly larger caLevel (early-exit on first match)
       outer_a: for (let lvl = diffCache.caLevel + 1; lvl <= maxBLevel; lvl++) {
         for (const bc of (bByLevel.get(lvl) ?? [])) {
-          const r = isSubsetCombo(diffCache, bc);
+          const r = isSubsetCombo(diffCache, bc, opts);
           if (r.isSubset) { supersets.push(generateCombinationKey(bc.combo, opts)); notes.push(...r.paramNotes); break outer_a; }
         }
       }
@@ -694,7 +848,7 @@ function compareCombos(
       // UL-covered: same caLevel, more UL carriers
       if (supersets.length === 0) {
         for (const bc of (bByLevel.get(diffCache.caLevel) ?? [])) {
-          const r = isUlCoveredCombo(diffCache, bc);
+          const r = isUlCoveredCombo(diffCache, bc, opts);
           if (r.isCovered) { supersets.push(generateCombinationKey(bc.combo, opts)); notes.push(...r.paramNotes); break; }
         }
       }
@@ -702,7 +856,7 @@ function compareCombos(
       // Param-covered: same caLevel + band set, higher DL MIMO on all bands
       if (supersets.length === 0) {
         for (const bc of (bByLevel.get(diffCache.caLevel) ?? [])) {
-          const r = isParamCoveredCombo(diffCache, bc);
+          const r = isParamCoveredCombo(diffCache, bc, opts);
           if (r.isCovered) { supersets.push(generateCombinationKey(bc.combo, opts)); notes.push(...r.paramNotes); break; }
         }
       }
@@ -719,21 +873,21 @@ function compareCombos(
 
       outer_b: for (let lvl = diffCache.caLevel + 1; lvl <= maxALevel; lvl++) {
         for (const ac of (aByLevel.get(lvl) ?? [])) {
-          const r = isSubsetCombo(diffCache, ac);
+          const r = isSubsetCombo(diffCache, ac, opts);
           if (r.isSubset) { supersets.push(generateCombinationKey(ac.combo, opts)); notes.push(...r.paramNotes); break outer_b; }
         }
       }
 
       if (supersets.length === 0) {
         for (const ac of (aByLevel.get(diffCache.caLevel) ?? [])) {
-          const r = isUlCoveredCombo(diffCache, ac);
+          const r = isUlCoveredCombo(diffCache, ac, opts);
           if (r.isCovered) { supersets.push(generateCombinationKey(ac.combo, opts)); notes.push(...r.paramNotes); break; }
         }
       }
 
       if (supersets.length === 0) {
         for (const ac of (aByLevel.get(diffCache.caLevel) ?? [])) {
-          const r = isParamCoveredCombo(diffCache, ac);
+          const r = isParamCoveredCombo(diffCache, ac, opts);
           if (r.isCovered) { supersets.push(generateCombinationKey(ac.combo, opts)); notes.push(...r.paramNotes); break; }
         }
       }

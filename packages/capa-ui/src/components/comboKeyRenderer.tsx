@@ -226,32 +226,31 @@ function renderSegment(seg: string, key: number) {
 }
 
 /**
- * Greedy 2-pass matching of target segments against reference segments:
- * 1) exact bandLabel match (handles intra-band CA ordering),
+ * Greedy multi-pass matching of target segments against reference segments:
+ * 1) exact bandLabel match (preferring same UL presence, e.g. intra-band B7a+B7a),
  * 2) baseBand match (handles bandwidthClass upgrade e.g. B3a -> B3c).
  */
 function matchSegments(targetSegs: SegmentTokens[], refSegs: SegmentTokens[]): (SegmentTokens | undefined)[] {
   const usedRef = new Set<number>();
   const matched: (SegmentTokens | undefined)[] = new Array(targetSegs.length).fill(undefined);
 
-  // Pass 1: exact bandLabel match
-  targetSegs.forEach((t, ti) => {
-    const ri = refSegs.findIndex((r, idx) => !usedRef.has(idx) && r.bandLabel.toLowerCase() === t.bandLabel.toLowerCase());
-    if (ri >= 0) {
-      usedRef.add(ri);
-      matched[ti] = refSegs[ri];
-    }
-  });
+  const passes: Array<(t: SegmentTokens, r: SegmentTokens) => boolean> = [
+    (t, r) => r.bandLabel.toLowerCase() === t.bandLabel.toLowerCase() && Boolean(r.ulBwCls) === Boolean(t.ulBwCls),
+    (t, r) => r.bandLabel.toLowerCase() === t.bandLabel.toLowerCase(),
+    (t, r) => r.baseBand.toLowerCase() === t.baseBand.toLowerCase() && Boolean(r.ulBwCls) === Boolean(t.ulBwCls),
+    (t, r) => r.baseBand.toLowerCase() === t.baseBand.toLowerCase(),
+  ];
 
-  // Pass 2: baseBand match
-  targetSegs.forEach((t, ti) => {
-    if (matched[ti]) return;
-    const ri = refSegs.findIndex((r, idx) => !usedRef.has(idx) && r.baseBand.toLowerCase() === t.baseBand.toLowerCase());
-    if (ri >= 0) {
-      usedRef.add(ri);
-      matched[ti] = refSegs[ri];
-    }
-  });
+  for (const pred of passes) {
+    targetSegs.forEach((t, ti) => {
+      if (matched[ti]) return;
+      const ri = refSegs.findIndex((r, idx) => !usedRef.has(idx) && pred(t, r));
+      if (ri >= 0) {
+        usedRef.add(ri);
+        matched[ti] = refSegs[ri];
+      }
+    });
+  }
 
   return matched;
 }

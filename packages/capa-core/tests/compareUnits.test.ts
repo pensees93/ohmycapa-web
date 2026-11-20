@@ -200,4 +200,147 @@ describe('Stage 3 Compare & Key Generation Unit Tests', () => {
     expect(coveredB).toBeDefined();
     expect(coveredB?.paramNotes?.some((n) => n.includes('256QAM covers 64QAM'))).toBe(true);
   });
+
+  it('enforces 3GPP fallback rules: DL BW class (B3a cannot cover B3c), UL band match, and MIMO/QAM dominance', () => {
+    // 1) B3a (1CC) + UL on B1 CANNOT cover B3c (2CC) + UL on B3
+    const devA1 = makeDevice('A1', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4, dlQam: 'qam256', ulQam: 'qam256' },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam256' },
+              { ratType: 'eutra', band: 5, bandwidthClassDL: 'a', dlMimo: 2, dlQam: 'qam256' },
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam256' },
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam256' },
+            ],
+            dlCc: 5,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const devB1 = makeDevice('B1', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam256' },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'c', bandwidthClassUL: 'a', dlMimo: 2, dlQam: 'qam256', ulQam: 'qam256' },
+            ],
+            dlCc: 3,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const res1 = compareCapaFormats(devA1, devB1);
+    expect(res1.ratResults.eutra?.comboDiffs.find((d) => d.b)?.status).toBe('b-only-unique');
+
+    // 2) Same B3c DL class, but UL on B1 only CANNOT cover UL on B3
+    const devA2 = makeDevice('A2', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4 },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'c', dlMimo: 4 },
+              { ratType: 'eutra', band: 5, bandwidthClassDL: 'a', dlMimo: 2 },
+            ],
+            dlCc: 4,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const devB2 = makeDevice('B2', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', dlMimo: 4 },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'c', bandwidthClassUL: 'a', dlMimo: 4 },
+            ],
+            dlCc: 3,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const res2 = compareCapaFormats(devA2, devB2);
+    expect(res2.ratResults.eutra?.comboDiffs.find((d) => d.b)?.status).toBe('b-only-unique');
+
+    // 3) Superset with lower DL MIMO (2 < 4) CANNOT cover higher DL MIMO fallback
+    const devA3 = makeDevice('A3', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', dlMimo: 4 },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'c', bandwidthClassUL: 'a', dlMimo: 2 },
+              { ratType: 'eutra', band: 5, bandwidthClassDL: 'a', dlMimo: 2 },
+            ],
+            dlCc: 4,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const devB3 = makeDevice('B3', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', dlMimo: 4 },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4 },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const res3 = compareCapaFormats(devA3, devB3);
+    expect(res3.ratResults.eutra?.comboDiffs.find((d) => d.b)?.status).toBe('b-only-unique');
+
+    // 4) B3c (2CC) + UL on B3 + MIMO 4 + qam256 DOES cover B3a (1CC) + UL on B3 + MIMO 2 + qam256
+    const devA4 = makeDevice('A4', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam256' },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'c', bandwidthClassUL: 'a', dlMimo: 4, dlQam: 'qam256', ulQam: 'qam256' },
+            ],
+            dlCc: 3,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const devB4 = makeDevice('B4', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam256' },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 2, dlQam: 'qam256', ulQam: 'qam256' },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const res4 = compareCapaFormats(devA4, devB4);
+    expect(res4.ratResults.eutra?.comboDiffs.find((d) => d.b)?.status).toBe('b-only-covered');
+  });
 });
