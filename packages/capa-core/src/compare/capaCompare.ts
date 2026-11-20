@@ -36,14 +36,25 @@ const SCS_KEYS = ['scs-15kHz', 'scs-30kHz', 'scs-60kHz', 'scs-120kHz'] as const;
 
 // ─── Utility helpers ─────────────────────────────────────────────────────────
 
+function fastEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!fastEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 function prop<V>(a: V | undefined, b: V | undefined): PropertyDiff<V> {
   if (a === undefined && b === undefined) return { status: 'same' };
   if (a === undefined) return { b, status: 'b-only' };
   if (b === undefined) return { a, status: 'a-only' };
-  // Fast path: identical reference or primitive equality
-  if (a === b) return { a, b, status: 'same' };
-  const same = JSON.stringify(a) === JSON.stringify(b);
-  return { a, b, status: same ? 'same' : 'changed' };
+  // Fast path: identical reference or structural equality without unconditional JSON serialization
+  return { a, b, status: fastEqual(a, b) ? 'same' : 'changed' };
 }
 
 
@@ -139,18 +150,18 @@ function compareUtraBands(bandsA: UtraBandInfo[], bandsB: UtraBandInfo[]): BandD
 
 // ─── Subset logic ────────────────────────────────────────────────────────────
 
-type BandFP = { ratType: 'nr' | 'eutra'; band: number };
-
 // ─── ComboCache: pre-computed per-combo data to avoid O(n²) recomputation ────
 
 interface ComboCache {
+  key: string;
   combo: BandCombination;
-  bandFPs: BandFP[];
-  bandCounts: Record<string, number>;
   /** Sorted fingerprint string for O(1) multiset equality: "eutra:3×2,nr:78×1" */
   bandFingerprint: string;
-  /** Bands sorted by ratType→band→UL presence, used by UL/param coverage */
-  sortedBands: BandParameter[];
+  /** Pre-sorted per-(rat:band) DL and UL entries for zero-allocation matching */
+  dlGroups: Record<string, BandParameter[]>;
+  dlGroupKeys: string[];
+  ulGroups: Record<string, BandParameter[]>;
+  ulGroupKeys: string[];
   ulCounts: { m: Record<string, number>; total: number };
   caLevel: number;
   ulLevel: number;
@@ -161,32 +172,19 @@ interface ComboCache {
   ulMimoMap: Record<string, number[]>;
 }
 
-function buildComboCache(combo: BandCombination): ComboCache {
-  const bandFPs: BandFP[] = combo.bands.map(b => ({ ratType: b.ratType as 'nr' | 'eutra', band: b.band }));
+function dlBandScore(b: BandParameter): number {
+  return getBwClassCcCount(b.bandwidthClassDL) * 100 + (b.dlMimo ?? 0) * 10 + qamRank(b.dlQam);
+}
 
-  const bandCounts: Record<string, number> = {};
-  for (const fp of bandFPs) {
-    const k = `${fp.ratType}:${fp.band}`;
-    bandCounts[k] = (bandCounts[k] ?? 0) + 1;
-  }
+function ulBandScore(b: BandParameter): number {
+  return getBwClassCcCount(b.bandwidthClassUL) * 100 + (b.ulMimo ?? 1) * 10 + qamRank(b.ulQam);
+}
 
-  const bandFingerprint = Object.keys(bandCounts)
-    .sort()
-    .map(k => `${k}×${bandCounts[k]}`)
-    .join(',');
-
-  // Sort by: ratType → band → bwClassDL → MIMO descending → UL first
-  const sortedBands = [...combo.bands].sort((a, b) => {
-    if (a.ratType !== b.ratType) return a.ratType.localeCompare(b.ratType);
-    if (a.band !== b.band) return a.band - b.band;
-    const aBw = a.bandwidthClassDL ?? '';
-    const bBw = b.bandwidthClassDL ?? '';
-    if (aBw !== bBw) return aBw.localeCompare(bBw);
-    const aMimo = a.dlMimo ?? 0;
-    const bMimo = b.dlMimo ?? 0;
-    if (aMimo !== bMimo) return bMimo - aMimo;
-    return (b.bandwidthClassUL ? 1 : 0) - (a.bandwidthClassUL ? 1 : 0);
-  });
+function buildComboCache(combo: BandCombination, key: string): ComboCache {
+  const dlGroups: Record<string, BandParameter[]> = {};
+  const ulGroups: Record<string, BandParameter[]> = {};
+  const ulM: Record<string, number> = {};
+  let ulTotal = 0;
 
   // Track parameter values per band type (sorted descending for coverage)
   const mimoMap: Record<string, number[]> = {};
@@ -194,56 +192,74 @@ function buildComboCache(combo: BandCombination): ComboCache {
   const ulQamMap: Record<string, number[]> = {};
   const ulMimoMap: Record<string, number[]> = {};
 
+  let dlCcSum = 0;
+  let ulCcSum = 0;
+
   for (const b of combo.bands) {
-    const k = `${b.ratType}:${b.band}:${b.bandwidthClassDL ?? 'a'}`;
-    
-    // DL MIMO
-    if (!mimoMap[k]) mimoMap[k] = [];
-    mimoMap[k].push(b.dlMimo ?? 0);
+    const groupKey = `${b.ratType}:${b.band}`;
+    (dlGroups[groupKey] ??= []).push(b);
 
-    // DL QAM
-    if (!dlQamMap[k]) dlQamMap[k] = [];
-    dlQamMap[k].push(qamRank(b.dlQam));
+    const k = `${groupKey}:${b.bandwidthClassDL ?? 'a'}`;
+    (mimoMap[k] ??= []).push(b.dlMimo ?? 0);
+    (dlQamMap[k] ??= []).push(qamRank(b.dlQam));
+    dlCcSum += getBwClassCcCount(b.bandwidthClassDL);
 
-    // UL Params (only for bands with UL)
     if (b.bandwidthClassUL) {
-      const uk = `${b.ratType}:${b.band}:${b.bandwidthClassUL}`;
-      if (!ulQamMap[uk]) ulQamMap[uk] = [];
-      ulQamMap[uk].push(qamRank(b.ulQam));
-      
-      if (!ulMimoMap[uk]) ulMimoMap[uk] = [];
-      ulMimoMap[uk].push(b.ulMimo ?? 1);
+      (ulGroups[groupKey] ??= []).push(b);
+      ulM[groupKey] = (ulM[groupKey] ?? 0) + 1;
+      ulTotal++;
+
+      const uk = `${groupKey}:${b.bandwidthClassUL}`;
+      (ulQamMap[uk] ??= []).push(qamRank(b.ulQam));
+      (ulMimoMap[uk] ??= []).push(b.ulMimo ?? 1);
+      ulCcSum += getBwClassCcCount(b.bandwidthClassUL);
     }
   }
 
-  // Sort all parameter arrays descending
+  const dlGroupKeys = Object.keys(dlGroups).sort();
+  const ulGroupKeys = Object.keys(ulGroups);
+
+  let bandFingerprint = '';
+  for (let i = 0; i < dlGroupKeys.length; i++) {
+    const gk = dlGroupKeys[i];
+    const grp = dlGroups[gk];
+    if (grp.length > 1) grp.sort((a, b) => dlBandScore(b) - dlBandScore(a));
+    if (i > 0) bandFingerprint += ',';
+    bandFingerprint += `${gk}×${grp.length}`;
+  }
+
+  for (const gk of ulGroupKeys) {
+    const grp = ulGroups[gk];
+    if (grp.length > 1) grp.sort((a, b) => ulBandScore(b) - ulBandScore(a));
+  }
+
+  // Sort parameter arrays descending only when multiple CCs share a band/class key
   const allMaps = [mimoMap, dlQamMap, ulQamMap, ulMimoMap];
   for (const m of allMaps) {
     for (const k of Object.keys(m)) {
-      m[k].sort((x, y) => y - x);
-    }
-  }
-
-  const ulM: Record<string, number> = {};
-  let ulTotal = 0;
-  for (const b of combo.bands) {
-    if (b.bandwidthClassUL) {
-      const k = `${b.ratType}:${b.band}`;
-      ulM[k] = (ulM[k] ?? 0) + 1;
-      ulTotal++;
+      if (m[k].length > 1) m[k].sort((x, y) => y - x);
     }
   }
 
   // Use FeatureSet-based CC count if available, otherwise fallback to bandwidth class
-  const caLevel = combo.dlCc ?? combo.bands.reduce((s, b) => s + getBwClassCcCount(b.bandwidthClassDL), 0);
-  const ulLevel = combo.ulCc ?? combo.bands.reduce(
-    (s, b) => s + (b.bandwidthClassUL ? getBwClassCcCount(b.bandwidthClassUL) : 0), 0
-  );
+  const caLevel = combo.dlCc ?? dlCcSum;
+  const ulLevel = combo.ulCc ?? ulCcSum;
 
   return {
-    combo, bandFPs, bandCounts, bandFingerprint, sortedBands,
-    ulCounts: { m: ulM, total: ulTotal }, caLevel, ulLevel,
-    mimoMap, dlQamMap, ulQamMap, ulMimoMap
+    key,
+    combo,
+    bandFingerprint,
+    dlGroups,
+    dlGroupKeys,
+    ulGroups,
+    ulGroupKeys,
+    ulCounts: { m: ulM, total: ulTotal },
+    caLevel,
+    ulLevel,
+    mimoMap,
+    dlQamMap,
+    ulQamMap,
+    ulMimoMap,
   };
 }
 
@@ -320,51 +336,33 @@ interface CoveringMatchResult {
 }
 
 /**
- * Matches each item in smallItems 1-to-1 to a distinct item in largeItems
- * within the same (ratType, band) group satisfying coversFn.
+ * Matches pre-grouped, pre-sorted entries 1-to-1 within each (ratType, band) group
+ * without allocating temporary maps or sorted arrays in the hot matching path.
  */
 function matchBandGroups(
-  smallItems: BandParameter[],
-  largeItems: BandParameter[],
-  scoreFn: (b: BandParameter) => number,
+  sGroups: Record<string, BandParameter[]>,
+  sKeys: string[],
+  lGroups: Record<string, BandParameter[]>,
   coversFn: (s: BandParameter, l: BandParameter) => boolean
 ): MatchedBandPair[] | null {
-  if (smallItems.length > largeItems.length) return null;
-  if (smallItems.length === 0) return [];
+  if (sKeys.length === 0) return [];
 
-  const sGroups = new Map<string, BandParameter[]>();
-  const lGroups = new Map<string, BandParameter[]>();
-
-  for (const b of smallItems) {
-    const k = `${b.ratType}:${b.band}`;
-    const arr = sGroups.get(k);
-    if (arr) arr.push(b);
-    else sGroups.set(k, [b]);
-  }
-  for (const b of largeItems) {
-    const k = `${b.ratType}:${b.band}`;
-    const arr = lGroups.get(k);
-    if (arr) arr.push(b);
-    else lGroups.set(k, [b]);
-  }
-
-  for (const [k, sList] of sGroups) {
-    const lList = lGroups.get(k);
-    if (!lList || lList.length < sList.length) return null;
+  for (const k of sKeys) {
+    const lList = lGroups[k];
+    if (!lList || lList.length < sGroups[k].length) return null;
   }
 
   const matched: MatchedBandPair[] = [];
 
-  for (const [k, rawSList] of sGroups) {
-    const rawLList = lGroups.get(k)!;
-    if (rawSList.length === 1 && rawLList.length === 1) {
-      if (!coversFn(rawSList[0], rawLList[0])) return null;
-      matched.push({ s: rawSList[0], l: rawLList[0] });
+  for (const k of sKeys) {
+    const sList = sGroups[k];
+    const lList = lGroups[k];
+    if (sList.length === 1 && lList.length === 1) {
+      if (!coversFn(sList[0], lList[0])) return null;
+      matched.push({ s: sList[0], l: lList[0] });
       continue;
     }
 
-    const sList = [...rawSList].sort((a, b) => scoreFn(b) - scoreFn(a));
-    const lList = [...rawLList].sort((a, b) => scoreFn(b) - scoreFn(a));
     const usedL = new Array<boolean>(lList.length).fill(false);
     const groupPairs: MatchedBandPair[] = [];
 
@@ -397,30 +395,27 @@ function matchBandGroups(
  * arbitrary UL attachment order.
  */
 function matchCoveringBandEntries(
-  smallBands: BandParameter[],
-  largeBands: BandParameter[],
+  smallCache: ComboCache,
+  largeCache: ComboCache,
   opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {},
   requireSameDlBwClass = false,
   requireSameUlBwClass = false
 ): CoveringMatchResult | null {
-  const dlScore = (b: BandParameter) =>
-    getBwClassCcCount(b.bandwidthClassDL) * 100 + (b.dlMimo ?? 0) * 10 + qamRank(b.dlQam);
+  if (smallCache.combo.bands.length > largeCache.combo.bands.length) return null;
+  if (smallCache.ulCounts.total > largeCache.ulCounts.total) return null;
+
   const dlPairs = matchBandGroups(
-    smallBands,
-    largeBands,
-    dlScore,
+    smallCache.dlGroups,
+    smallCache.dlGroupKeys,
+    largeCache.dlGroups,
     (s, l) => dlEntryCovers(s, l, opts, requireSameDlBwClass)
   );
   if (!dlPairs) return null;
 
-  const smallUl = smallBands.filter((b) => Boolean(b.bandwidthClassUL));
-  const largeUl = largeBands.filter((b) => Boolean(b.bandwidthClassUL));
-  const ulScore = (b: BandParameter) =>
-    getBwClassCcCount(b.bandwidthClassUL) * 100 + (b.ulMimo ?? 1) * 10 + qamRank(b.ulQam);
   const ulPairs = matchBandGroups(
-    smallUl,
-    largeUl,
-    ulScore,
+    smallCache.ulGroups,
+    smallCache.ulGroupKeys,
+    largeCache.ulGroups,
     (s, l) => ulEntryCovers(s, l, opts, requireSameUlBwClass)
   );
   if (!ulPairs) return null;
@@ -474,8 +469,8 @@ function collectCoverageParamNotes(
 }
 
 function appendExtraUlCoverageNote(notes: string[], fewerCache: ComboCache, moreCache: ComboCache): void {
-  const extraUl = Object.keys(moreCache.ulCounts.m)
-    .filter((k) => (moreCache.ulCounts.m[k] ?? 0) > (fewerCache.ulCounts.m[k] ?? 0))
+  const extraUl = moreCache.ulGroupKeys
+    .filter((k) => moreCache.ulGroups[k].length > (fewerCache.ulGroups[k]?.length ?? 0))
     .map((k) => {
       const [rt, band] = k.split(':');
       return rt === 'nr' ? `n${band}` : `B${band}`;
@@ -498,14 +493,7 @@ function isSubsetCombo(
   if (smallCache.caLevel >= largeCache.caLevel) return { isSubset: false, paramNotes: [] };
   if (smallCache.ulLevel > largeCache.ulLevel) return { isSubset: false, paramNotes: [] };
 
-  for (const [k, count] of Object.entries(smallCache.bandCounts)) {
-    if ((largeCache.bandCounts[k] ?? 0) < count) return { isSubset: false, paramNotes: [] };
-  }
-  for (const [k, count] of Object.entries(smallCache.ulCounts.m)) {
-    if ((largeCache.ulCounts.m[k] ?? 0) < count) return { isSubset: false, paramNotes: [] };
-  }
-
-  const match = matchCoveringBandEntries(smallCache.combo.bands, largeCache.combo.bands, opts, false, false);
+  const match = matchCoveringBandEntries(smallCache, largeCache, opts, false, false);
   if (!match) return { isSubset: false, paramNotes: [] };
 
   const paramNotes = collectCoverageParamNotes(match, opts);
@@ -542,7 +530,7 @@ function isUlCoveredCombo(
     if ((more.m[k] ?? 0) < count) return { isCovered: false, paramNotes: [] };
   }
 
-  const match = matchCoveringBandEntries(fewerCache.combo.bands, moreCache.combo.bands, opts, true, false);
+  const match = matchCoveringBandEntries(fewerCache, moreCache, opts, true, false);
   if (!match) return { isCovered: false, paramNotes: [] };
 
   const paramNotes = collectCoverageParamNotes(match, opts);
@@ -617,7 +605,7 @@ function isParamCoveredCombo(
     if ((strongerUL.m[k] ?? 0) !== count) return { isCovered: false, paramNotes: [] };
   }
 
-  if (!matchCoveringBandEntries(weakerCache.combo.bands, strongerCache.combo.bands, opts, true, true)) {
+  if (!matchCoveringBandEntries(weakerCache, strongerCache, opts, true, true)) {
     return { isCovered: false, paramNotes: [] };
   }
 
@@ -715,7 +703,7 @@ function valDisplay(v: any): string {
 function compareComboLevelParams(a: BandCombination, b: BandCombination): string[] {
   const notes: string[] = [];
   const diff = (valA: any, valB: any, label: string) => {
-    if (JSON.stringify(valA) !== JSON.stringify(valB)) {
+    if (!fastEqual(valA, valB)) {
       notes.push(`${label}: ${valDisplay(valA)}→${valDisplay(valB)}`);
     }
   };
@@ -781,22 +769,49 @@ function buildCoverageDirection(
   return { exactMatch: exactSame, exactChanged, coveredBySuperset: covered, trulyUnique: unique, total, coverageRate };
 }
 
+function indexCandidates(caches: Iterable<ComboCache>): {
+  byLevel: Map<number, ComboCache[]>;
+  byFingerprint: Map<string, ComboCache[]>;
+  maxLevel: number;
+} {
+  const byLevel = new Map<number, ComboCache[]>();
+  const byFingerprint = new Map<string, ComboCache[]>();
+  let maxLevel = 0;
+
+  for (const c of caches) {
+    let lvlArr = byLevel.get(c.caLevel);
+    if (!lvlArr) { lvlArr = []; byLevel.set(c.caLevel, lvlArr); }
+    lvlArr.push(c);
+    if (c.caLevel > maxLevel) maxLevel = c.caLevel;
+
+    let fpArr = byFingerprint.get(c.bandFingerprint);
+    if (!fpArr) { fpArr = []; byFingerprint.set(c.bandFingerprint, fpArr); }
+    fpArr.push(c);
+  }
+
+  return { byLevel, byFingerprint, maxLevel };
+}
+
 function compareCombos(
   combosA: BandCombination[],
   combosB: BandCombination[],
   opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {}
 ): { comboDiffs: ComboDiff[]; coverage: CoverageAnalysis } {
+  const useCachedKey = opts.showQam !== false && opts.showMimo !== false;
+  const getComboKey = (c: BandCombination): string =>
+    useCachedKey && c.key ? c.key : generateCombinationKey(c, opts);
+
   const mapA = new Map<string, BandCombination>();
   const mapB = new Map<string, BandCombination>();
 
-  for (const c of combosA) mapA.set(generateCombinationKey(c, opts), c);
-  for (const c of combosB) mapB.set(generateCombinationKey(c, opts), c);
+  for (const c of combosA) mapA.set(getComboKey(c), c);
+  for (const c of combosB) mapB.set(getComboKey(c), c);
 
   // Pre-build caches once per combo — avoids O(n²) recomputation in coverage loops
   const cacheA = new Map<string, ComboCache>();
   const cacheB = new Map<string, ComboCache>();
-  for (const [key, c] of mapA) cacheA.set(key, buildComboCache(c));
-  for (const [key, c] of mapB) cacheB.set(key, buildComboCache(c));
+  for (const [key, c] of mapA) cacheA.set(key, buildComboCache(c, key));
+  for (const [key, c] of mapB) cacheB.set(key, buildComboCache(c, key));
 
   const diffs: ComboDiff[] = [];
 
@@ -873,44 +888,33 @@ function compareCombos(
     }
   }
 
-  // Layer 2: subset coverage analysis — O(n) per diff via level-indexed caches
-  // Build level index: caLevel → ComboCache[] for fast range lookup
-  const bByLevel = new Map<number, ComboCache[]>();
-  for (const bc of cacheB.values()) {
-    const arr = bByLevel.get(bc.caLevel) ?? [];
-    arr.push(bc);
-    bByLevel.set(bc.caLevel, arr);
-  }
-  const aByLevel = new Map<number, ComboCache[]>();
-  for (const ac of cacheA.values()) {
-    const arr = aByLevel.get(ac.caLevel) ?? [];
-    arr.push(ac);
-    aByLevel.set(ac.caLevel, arr);
-  }
-
-  const maxBLevel = bByLevel.size > 0 ? Math.max(...bByLevel.keys()) : 0;
-  const maxALevel = aByLevel.size > 0 ? Math.max(...aByLevel.keys()) : 0;
+  // Layer 2: subset coverage analysis via level & fingerprint indices
+  const idxB = indexCandidates(cacheB.values());
+  const idxA = indexCandidates(cacheA.values());
 
   const findCoveringSuperset = (
     targetCache: ComboCache,
     candidateByLevel: Map<number, ComboCache[]>,
+    candidateByFingerprint: Map<string, ComboCache[]>,
     maxCandidateLevel: number
   ): { supersets: string[]; notes: string[] } | null => {
-    const sameLevel = candidateByLevel.get(targetCache.caLevel) ?? [];
+    const sameBandCands = candidateByFingerprint.get(targetCache.bandFingerprint);
 
-    // 1. Param-covered: same caLevel + DL/UL band/class set, higher MIMO/QAM
-    for (const cand of sameLevel) {
-      const r = isParamCoveredCombo(targetCache, cand, opts);
-      if (r.isCovered) {
-        return { supersets: [generateCombinationKey(cand.combo, opts)], notes: r.paramNotes };
+    if (sameBandCands) {
+      // 1. Param-covered: same caLevel + DL/UL band/class set, higher MIMO/QAM
+      for (const cand of sameBandCands) {
+        const r = isParamCoveredCombo(targetCache, cand, opts);
+        if (r.isCovered) {
+          return { supersets: [cand.key], notes: r.paramNotes };
+        }
       }
-    }
 
-    // 2. UL-covered: same caLevel + DL band/class set, more UL carriers or wider contiguous UL class
-    for (const cand of sameLevel) {
-      const r = isUlCoveredCombo(targetCache, cand, opts);
-      if (r.isCovered) {
-        return { supersets: [generateCombinationKey(cand.combo, opts)], notes: r.paramNotes };
+      // 2. UL-covered: same caLevel + DL band/class set, more UL carriers or wider contiguous UL class
+      for (const cand of sameBandCands) {
+        const r = isUlCoveredCombo(targetCache, cand, opts);
+        if (r.isCovered) {
+          return { supersets: [cand.key], notes: r.paramNotes };
+        }
       }
     }
 
@@ -919,7 +923,7 @@ function compareCombos(
       for (const cand of (candidateByLevel.get(lvl) ?? [])) {
         const r = isSubsetCombo(targetCache, cand, opts);
         if (r.isSubset) {
-          return { supersets: [generateCombinationKey(cand.combo, opts)], notes: r.paramNotes };
+          return { supersets: [cand.key], notes: r.paramNotes };
         }
       }
     }
@@ -929,14 +933,14 @@ function compareCombos(
 
   for (const diff of diffs) {
     if (diff.status === 'a-only-unique' && diff.a) {
-      const hit = findCoveringSuperset(cacheA.get(diff.key!)!, bByLevel, maxBLevel);
+      const hit = findCoveringSuperset(cacheA.get(diff.key!)!, idxB.byLevel, idxB.byFingerprint, idxB.maxLevel);
       if (hit) {
         diff.status = 'a-only-covered';
         diff.coveringSupersets = [...new Set(hit.supersets)];
         diff.paramNotes = [...new Set(hit.notes)];
       }
     } else if (diff.status === 'b-only-unique' && diff.b) {
-      const hit = findCoveringSuperset(cacheB.get(diff.key!)!, aByLevel, maxALevel);
+      const hit = findCoveringSuperset(cacheB.get(diff.key!)!, idxA.byLevel, idxA.byFingerprint, idxA.maxLevel);
       if (hit) {
         diff.status = 'b-only-covered';
         diff.coveringSupersets = [...new Set(hit.supersets)];
@@ -985,22 +989,42 @@ function compareRat(
 
 function buildRatSummary(result: RatCompareResult): RatSummary {
   const { bandDiffs, comboDiffs, coverage } = result;
+  let sharedBands = 0, aOnlyBands = 0, bOnlyBands = 0, changedBands = 0;
+  for (const d of bandDiffs) {
+    if (d.status === 'same') sharedBands++;
+    else if (d.status === 'changed') { sharedBands++; changedBands++; }
+    else if (d.status === 'a-only') aOnlyBands++;
+    else if (d.status === 'b-only') bOnlyBands++;
+  }
+
+  let exactSame = 0, exactChanged = 0, aOnlyCovered = 0, aOnlyUnique = 0, bOnlyCovered = 0, bOnlyUnique = 0;
+  for (const d of comboDiffs) {
+    switch (d.status) {
+      case 'exact-same': exactSame++; break;
+      case 'exact-changed': exactChanged++; break;
+      case 'a-only-covered': aOnlyCovered++; break;
+      case 'a-only-unique': aOnlyUnique++; break;
+      case 'b-only-covered': bOnlyCovered++; break;
+      case 'b-only-unique': bOnlyUnique++; break;
+    }
+  }
+
   return {
     bands: {
       total: bandDiffs.length,
-      shared: bandDiffs.filter(d => d.status === 'same' || d.status === 'changed').length,
-      aOnly: bandDiffs.filter(d => d.status === 'a-only').length,
-      bOnly: bandDiffs.filter(d => d.status === 'b-only').length,
-      changed: bandDiffs.filter(d => d.status === 'changed').length,
+      shared: sharedBands,
+      aOnly: aOnlyBands,
+      bOnly: bOnlyBands,
+      changed: changedBands,
     },
     combos: {
       total: comboDiffs.length,
-      exactSame: comboDiffs.filter(d => d.status === 'exact-same').length,
-      exactChanged: comboDiffs.filter(d => d.status === 'exact-changed').length,
-      aOnlyCovered: comboDiffs.filter(d => d.status === 'a-only-covered').length,
-      aOnlyUnique: comboDiffs.filter(d => d.status === 'a-only-unique').length,
-      bOnlyCovered: comboDiffs.filter(d => d.status === 'b-only-covered').length,
-      bOnlyUnique: comboDiffs.filter(d => d.status === 'b-only-unique').length,
+      exactSame,
+      exactChanged,
+      aOnlyCovered,
+      aOnlyUnique,
+      bOnlyCovered,
+      bOnlyUnique,
     },
     coverage,
   };
@@ -1117,7 +1141,7 @@ function compareFeatureLeaves(
     } else {
       // For bool/presence/fgiBit: exact compare
       // For number/enum: exact compare (higher category shown in UI)
-      diff.status = JSON.stringify(a.value) === JSON.stringify(b.value) ? 'same' : 'different';
+      diff.status = fastEqual(a.value, b.value) ? 'same' : 'different';
     }
 
     diffs.push(diff);

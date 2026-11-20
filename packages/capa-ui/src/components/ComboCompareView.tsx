@@ -258,6 +258,8 @@ const ComboRow = React.memo(function ComboRow({ diff, displayOptions }: { diff: 
       mb: 0.5,
       alignItems: 'start',
       px: 0.25,
+      contentVisibility: 'auto',
+      containIntrinsicSize: '0 34px',
     }}>
       <ComboSideCard
         combo={comboA}
@@ -424,6 +426,8 @@ function InlineCoverageMeter({ coverage }: { coverage: CoverageAnalysis }) {
 
 // ─── Main view ────────────────────────────────────────────────────────────────
 
+const NATURAL_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
 type FilterType = 'diff' | 'unique' | 'exact-changed' | 'covered' | 'a-only' | 'b-only' | 'shared' | 'all';
 type GroupMode = 'ca' | 'status';
 
@@ -434,6 +438,16 @@ interface ComboCompareViewProps {
   deviceBName?: string;
   displayOptions?: ComboDisplayOptions;
   ratType?: RatType;
+}
+
+interface IndexedComboDiff {
+  diff: ComboDiff;
+  lowerKey: string;
+  bandKeys: Set<string>;
+  eutraDlCc: number;
+  nrDlCc: number;
+  caGroupKey: string;
+  caGroupTitle: string;
 }
 
 export const ComboCompareView: React.FC<ComboCompareViewProps> = ({
@@ -447,30 +461,72 @@ export const ComboCompareView: React.FC<ComboCompareViewProps> = ({
   const [selectedBands, setSelectedBands] = useState<Set<string>>(new Set());
   const isDark = useTheme().palette.mode === 'dark';
 
-  const counts = useMemo(() => comboDiffs.reduce((acc, d) => {
-    if (d.status !== 'exact-same') acc.diff++;
-    if (d.status === 'exact-same' || d.status === 'exact-changed') acc.exact++;
-    if (d.status === 'exact-changed') acc.exactChanged++;
-    if (d.status === 'a-only-covered' || d.status === 'b-only-covered') acc.covered++;
-    if (d.status === 'a-only-covered' || d.status === 'a-only-unique') acc.aOnly++;
-    if (d.status === 'b-only-covered' || d.status === 'b-only-unique') acc.bOnly++;
-    if (d.status === 'a-only-unique' || d.status === 'b-only-unique') acc.unique++;
-    return acc;
-  }, { diff: 0, exact: 0, exactChanged: 0, covered: 0, aOnly: 0, bOnly: 0, unique: 0 }), [comboDiffs]);
+  const { counts, allBandsInDiffs, indexedDiffs } = useMemo(() => {
+    const accCounts = { diff: 0, exact: 0, exactChanged: 0, covered: 0, aOnly: 0, bOnly: 0, unique: 0 };
+    const seenBands = new Set<string>();
+    const bandList: { ratType: 'nr' | 'eutra'; band: number }[] = [];
+    const isEndc = ratType === 'eutra-nr';
+
+    const indexed: IndexedComboDiff[] = comboDiffs.map(d => {
+      if (d.status !== 'exact-same') accCounts.diff++;
+      if (d.status === 'exact-same' || d.status === 'exact-changed') accCounts.exact++;
+      if (d.status === 'exact-changed') accCounts.exactChanged++;
+      if (d.status === 'a-only-covered' || d.status === 'b-only-covered') accCounts.covered++;
+      if (d.status === 'a-only-covered' || d.status === 'a-only-unique') accCounts.aOnly++;
+      if (d.status === 'b-only-covered' || d.status === 'b-only-unique') accCounts.bOnly++;
+      if (d.status === 'a-only-unique' || d.status === 'b-only-unique') accCounts.unique++;
+
+      const bandKeys = new Set<string>();
+      const bands = d.a?.bands ?? d.b?.bands ?? [];
+      let eutraDlCc = 0;
+      let nrDlCc = 0;
+      for (const b of bands) {
+        const k = `${b.ratType}:${b.band}`;
+        bandKeys.add(k);
+        if (!seenBands.has(k)) {
+          seenBands.add(k);
+          bandList.push({ ratType: b.ratType, band: b.band });
+        }
+        if (isEndc) {
+          const cc = getBwClassCcCount(b.bandwidthClassDL);
+          if (b.ratType === 'eutra') eutraDlCc += cc;
+          else nrDlCc += cc;
+        }
+      }
+      if (d.a && d.b) {
+        for (const b of d.b.bands) {
+          const k = `${b.ratType}:${b.band}`;
+          bandKeys.add(k);
+          if (!seenBands.has(k)) {
+            seenBands.add(k);
+            bandList.push({ ratType: b.ratType, band: b.band });
+          }
+        }
+      }
+
+      const caGroupKey = isEndc
+        ? `${eutraDlCc}LTE+${nrDlCc}NR·${d.caLevel}DL${d.ulLevel}UL`
+        : `${d.caLevel}DL${d.ulLevel}UL`;
+      const caGroupTitle = isEndc
+        ? `${eutraDlCc}LTE + ${nrDlCc}NR · ${d.caLevel}DL${d.ulLevel}UL-ENDC`
+        : `${d.caLevel}DL${d.ulLevel}UL-CA`;
+
+      return {
+        diff: d,
+        lowerKey: d.key.toLowerCase(),
+        bandKeys,
+        eutraDlCc,
+        nrDlCc,
+        caGroupKey,
+        caGroupTitle,
+      };
+    });
+
+    bandList.sort((a, b) => a.ratType === b.ratType ? a.band - b.band : a.ratType === 'eutra' ? -1 : 1);
+    return { counts: accCounts, allBandsInDiffs: bandList, indexedDiffs: indexed };
+  }, [comboDiffs, ratType]);
 
   const filter: FilterType = userFilter ?? (counts.diff > 0 ? 'diff' : 'all');
-
-  const allBandsInDiffs = useMemo(() => {
-    const seen = new Set<string>();
-    const result: { ratType: 'nr' | 'eutra'; band: number }[] = [];
-    for (const d of comboDiffs) {
-      for (const b of [...(d.a?.bands ?? []), ...(d.b?.bands ?? [])]) {
-        const k = `${b.ratType}:${b.band}`;
-        if (!seen.has(k)) { seen.add(k); result.push({ ratType: b.ratType, band: b.band }); }
-      }
-    }
-    return result.sort((a, b) => a.ratType === b.ratType ? a.band - b.band : a.ratType === 'eutra' ? -1 : 1);
-  }, [comboDiffs]);
 
   const toggleBand = useCallback((key: string) => {
     setSelectedBands(prev => {
@@ -488,75 +544,63 @@ export const ComboCompareView: React.FC<ComboCompareViewProps> = ({
 
   const filtered = useMemo(() => {
     const searchLower = deferredSearch.toLowerCase();
-    const parsedSelectedBands = selectedBandsArr.map(k => {
-      const [rt, bStr] = k.split(':');
-      return { ratType: rt, band: Number(bStr) };
-    });
 
-    return comboDiffs.filter(d => {
-      const matchSearch = !searchLower || d.key.toLowerCase().includes(searchLower);
+    return indexedDiffs.filter(item => {
+      if (searchLower && !item.lowerKey.includes(searchLower)) return false;
+
+      const s = item.diff.status;
       const matchFilter = filter === 'all' ? true
-        : filter === 'diff' ? d.status !== 'exact-same'
-        : filter === 'unique' ? (d.status === 'a-only-unique' || d.status === 'b-only-unique')
-        : filter === 'exact-changed' ? d.status === 'exact-changed'
-        : filter === 'covered' ? (d.status === 'a-only-covered' || d.status === 'b-only-covered')
-        : filter === 'shared' ? (d.status === 'exact-same' || d.status === 'exact-changed')
-        : filter === 'a-only' ? (d.status === 'a-only-covered' || d.status === 'a-only-unique')
-        : (d.status === 'b-only-covered' || d.status === 'b-only-unique');
+        : filter === 'diff' ? s !== 'exact-same'
+        : filter === 'unique' ? (s === 'a-only-unique' || s === 'b-only-unique')
+        : filter === 'exact-changed' ? s === 'exact-changed'
+        : filter === 'covered' ? (s === 'a-only-covered' || s === 'b-only-covered')
+        : filter === 'shared' ? (s === 'exact-same' || s === 'exact-changed')
+        : filter === 'a-only' ? (s === 'a-only-covered' || s === 'a-only-unique')
+        : (s === 'b-only-covered' || s === 'b-only-unique');
+      if (!matchFilter) return false;
 
-      const matchBands = parsedSelectedBands.length === 0 || parsedSelectedBands.every(psb => {
-        const bands = d.a?.bands ?? d.b?.bands ?? [];
-        return bands.some((b: any) => b.ratType === psb.ratType && b.band === psb.band);
-      });
-      return matchSearch && matchFilter && matchBands;
+      return selectedBandsArr.length === 0 || selectedBandsArr.every(k => item.bandKeys.has(k));
     });
-  }, [comboDiffs, deferredSearch, filter, selectedBandsArr]);
+  }, [indexedDiffs, deferredSearch, filter, selectedBandsArr]);
 
   const groups = useMemo(() => {
     if (groupMode === 'status') {
       const byStatus = new Map<ComboDiff['status'], ComboDiff[]>();
-      for (const d of filtered) {
-        const arr = byStatus.get(d.status) ?? [];
+      for (const item of filtered) {
+        const d = item.diff;
+        let arr = byStatus.get(d.status);
+        if (!arr) { arr = []; byStatus.set(d.status, arr); }
         arr.push(d);
-        byStatus.set(d.status, arr);
       }
       return STATUS_GROUP_ORDER
         .filter(({ status }) => byStatus.has(status))
         .map(({ status, title }) => {
-          const sortedDiffs = [...byStatus.get(status)!].sort((a, b) => {
+          const sortedDiffs = byStatus.get(status)!.sort((a, b) => {
             if (b.caLevel !== a.caLevel) return b.caLevel - a.caLevel;
             if (b.ulLevel !== a.ulLevel) return b.ulLevel - a.ulLevel;
-            return a.key.localeCompare(b.key, undefined, { numeric: true, sensitivity: 'base' });
+            return NATURAL_COLLATOR.compare(a.key, b.key);
           });
           return { key: `status:${status}`, title, diffs: sortedDiffs };
         });
     }
 
-    const isEndc = ratType === 'eutra-nr';
     const grouped = new Map<string, { title: string; caLevel: number; ulLevel: number; eutraDlCc: number; nrDlCc: number; diffs: ComboDiff[] }>();
 
-    for (const d of filtered) {
-      let eutraDlCc = 0;
-      let nrDlCc = 0;
-      if (isEndc) {
-        const bands = d.a?.bands ?? d.b?.bands ?? [];
-        for (const b of bands) {
-          const cc = getBwClassCcCount(b.bandwidthClassDL);
-          if (b.ratType === 'eutra') eutraDlCc += cc;
-          else nrDlCc += cc;
-        }
+    for (const item of filtered) {
+      const d = item.diff;
+      let g = grouped.get(item.caGroupKey);
+      if (!g) {
+        g = {
+          title: item.caGroupTitle,
+          caLevel: d.caLevel,
+          ulLevel: d.ulLevel,
+          eutraDlCc: item.eutraDlCc,
+          nrDlCc: item.nrDlCc,
+          diffs: [],
+        };
+        grouped.set(item.caGroupKey, g);
       }
-      const key = isEndc
-        ? `${eutraDlCc}LTE+${nrDlCc}NR·${d.caLevel}DL${d.ulLevel}UL`
-        : `${d.caLevel}DL${d.ulLevel}UL`;
-      const title = isEndc
-        ? `${eutraDlCc}LTE + ${nrDlCc}NR · ${d.caLevel}DL${d.ulLevel}UL-ENDC`
-        : `${d.caLevel}DL${d.ulLevel}UL-CA`;
-
-      if (!grouped.has(key)) {
-        grouped.set(key, { title, caLevel: d.caLevel, ulLevel: d.ulLevel, eutraDlCc, nrDlCc, diffs: [] });
-      }
-      grouped.get(key)!.diffs.push(d);
+      g.diffs.push(d);
     }
 
     return [...grouped.entries()]
@@ -567,14 +611,14 @@ export const ComboCompareView: React.FC<ComboCompareViewProps> = ({
         return b.eutraDlCc - a.eutraDlCc;
       })
       .map(([key, g]) => {
-        const sortedDiffs = [...g.diffs].sort((a, b) => {
+        g.diffs.sort((a, b) => {
           const rankDiff = (STATUS_SEVERITY_RANK[a.status] ?? 9) - (STATUS_SEVERITY_RANK[b.status] ?? 9);
           if (rankDiff !== 0) return rankDiff;
-          return a.key.localeCompare(b.key, undefined, { numeric: true, sensitivity: 'base' });
+          return NATURAL_COLLATOR.compare(a.key, b.key);
         });
-        return { key, title: g.title, diffs: sortedDiffs };
+        return { key, title: g.title, diffs: g.diffs };
       });
-  }, [filtered, groupMode, ratType]);
+  }, [filtered, groupMode]);
 
   const toggleGroup = useCallback((key: string) => {
     setCollapsedGroups(prev => {

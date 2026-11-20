@@ -213,7 +213,21 @@ const BandTable = memo<{ bands: (NRBandInfo | EutraBandInfo)[]; ratType: RatType
 
 // ─── Combo list ───────────────────────────────────────────────────────────────
 
-const ComboGroup = memo<{ title: string; combos: BandCombination[]; options: ComboDisplayOptions }>(({ title, combos, options }) => {
+const NATURAL_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+interface ComboListItem {
+  combo: BandCombination;
+  displayKey: string;
+}
+
+function resolveComboKey(combo: BandCombination, options: ComboDisplayOptions): string {
+  if (options.showMimo !== false && options.showQam !== false && combo.key) {
+    return combo.key;
+  }
+  return generateCombinationKey(combo, options);
+}
+
+const ComboGroup = memo<{ title: string; items: ComboListItem[]; options: ComboDisplayOptions }>(({ title, items, options }) => {
   const [open, setOpen] = useState(true);
   const isDark = useTheme().palette.mode === 'dark';
 
@@ -232,35 +246,34 @@ const ComboGroup = memo<{ title: string; combos: BandCombination[]; options: Com
         </Typography>
         <Box sx={{ flex: 1, height: 1, bgcolor: 'divider' }} />
         <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.disabled', whiteSpace: 'nowrap' }}>
-          {combos.length} combos
+          {items.length} combos
         </Typography>
         {open ? <ExpandLessIcon sx={{ fontSize: 14, color: 'text.disabled' }} /> : <ExpandMoreIcon sx={{ fontSize: 14, color: 'text.disabled' }} />}
       </Box>
 
       <Collapse in={open}>
         <Box sx={{ mt: 0.4, px: 0.25 }}>
-          {combos.map((combo, i) => {
-            const displayKey = generateCombinationKey(combo, options);
-            return (
-              <Box key={`${displayKey}-${i}`} sx={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 0.75,
-                px: 1, py: 0.5, mb: 0.4, minHeight: 26,
-                borderRadius: 1, border: '1px solid', borderColor: 'divider',
-                bgcolor: isDark ? 'rgba(255,255,255,0.025)' : 'rgba(0,0,0,0.015)',
-              }}>
-                <Typography variant="caption" component="div" sx={{ fontSize: '0.76rem', color: 'text.primary', lineHeight: 1.3, overflow: 'hidden', minWidth: 0, flex: 1 }}>
-                  {renderComboKey({ key: displayKey, powerClass: combo.powerClass }, options)}
-                </Typography>
-                {combo.powerClass && (
-                  <Chip
-                    label={combo.powerClass}
-                    size="small"
-                    sx={{ height: 15, fontSize: '0.58rem', fontWeight: 600, bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)', flexShrink: 0 }}
-                  />
-                )}
-              </Box>
-            );
-          })}
+          {items.map(({ combo, displayKey }, i) => (
+            <Box key={`${displayKey}-${i}`} sx={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 0.75,
+              px: 1, py: 0.5, mb: 0.4, minHeight: 26,
+              borderRadius: 1, border: '1px solid', borderColor: 'divider',
+              bgcolor: isDark ? 'rgba(255,255,255,0.025)' : 'rgba(0,0,0,0.015)',
+              contentVisibility: 'auto',
+              containIntrinsicSize: '0 30px',
+            }}>
+              <Typography variant="caption" component="div" sx={{ fontSize: '0.76rem', color: 'text.primary', lineHeight: 1.3, overflow: 'hidden', minWidth: 0, flex: 1 }}>
+                {renderComboKey({ key: displayKey, powerClass: combo.powerClass }, options)}
+              </Typography>
+              {combo.powerClass && (
+                <Chip
+                  label={combo.powerClass}
+                  size="small"
+                  sx={{ height: 15, fontSize: '0.58rem', fontWeight: 600, bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)', flexShrink: 0 }}
+                />
+              )}
+            </Box>
+          ))}
         </Box>
       </Collapse>
     </Box>
@@ -271,20 +284,27 @@ const ComboList = memo<{ combos: BandCombination[]; options: ComboDisplayOptions
   const processedGroups = useMemo(() => {
     if (combos.length === 0) return [];
 
-    let displayedCombos = combos;
+    const deduped: ComboListItem[] = [];
     if (options.mergeRedundant !== false) {
-      const seen = new Map<string, BandCombination>();
+      const seen = new Set<string>();
       for (const c of combos) {
-        const k = generateCombinationKey(c, options);
-        if (!seen.has(k)) seen.set(k, c);
+        const displayKey = resolveComboKey(c, options);
+        if (!seen.has(displayKey)) {
+          seen.add(displayKey);
+          deduped.push({ combo: c, displayKey });
+        }
       }
-      displayedCombos = Array.from(seen.values());
+    } else {
+      for (const c of combos) {
+        deduped.push({ combo: c, displayKey: resolveComboKey(c, options) });
+      }
     }
 
     const isEndc = ratType === 'eutra-nr';
-    const grouped = new Map<string, { title: string; dlLevel: number; ulLevel: number; eutraDlCc: number; nrDlCc: number; combos: BandCombination[] }>();
+    const grouped = new Map<string, { title: string; dlLevel: number; ulLevel: number; eutraDlCc: number; nrDlCc: number; items: ComboListItem[] }>();
 
-    for (const c of displayedCombos) {
+    for (const item of deduped) {
+      const c = item.combo;
       const dlLevel = c.dlCc ?? c.bands.reduce((s: number, b: BandParameter) => s + getBwClassCcCount(b.bandwidthClassDL), 0);
       const ulLevel = c.ulCc ?? c.bands.reduce((s: number, b: BandParameter) => s + (b.bandwidthClassUL ? getBwClassCcCount(b.bandwidthClassUL) : 0), 0);
 
@@ -306,9 +326,9 @@ const ComboList = memo<{ combos: BandCombination[]; options: ComboDisplayOptions
         : `${dlLevel}DL${ulLevel}UL-CA`;
 
       if (!grouped.has(key)) {
-        grouped.set(key, { title, dlLevel, ulLevel, eutraDlCc, nrDlCc, combos: [] });
+        grouped.set(key, { title, dlLevel, ulLevel, eutraDlCc, nrDlCc, items: [] });
       }
-      grouped.get(key)!.combos.push(c);
+      grouped.get(key)!.items.push(item);
     }
 
     return [...grouped.entries()]
@@ -319,12 +339,8 @@ const ComboList = memo<{ combos: BandCombination[]; options: ComboDisplayOptions
         return b.eutraDlCc - a.eutraDlCc;
       })
       .map(([key, g]) => {
-        const sortedCs = [...g.combos].sort((a, b) => {
-          const keyA = generateCombinationKey(a, options);
-          const keyB = generateCombinationKey(b, options);
-          return keyA.localeCompare(keyB, undefined, { numeric: true, sensitivity: 'base' });
-        });
-        return { key, title: g.title, combos: sortedCs };
+        const sortedItems = [...g.items].sort((a, b) => NATURAL_COLLATOR.compare(a.displayKey, b.displayKey));
+        return { key, title: g.title, items: sortedItems };
       });
   }, [combos, options, ratType]);
 
@@ -338,8 +354,8 @@ const ComboList = memo<{ combos: BandCombination[]; options: ComboDisplayOptions
 
   return (
     <Box>
-      {processedGroups.map(({ key, title, combos: cs }) => (
-        <ComboGroup key={key} title={title} combos={cs} options={options} />
+      {processedGroups.map(({ key, title, items }) => (
+        <ComboGroup key={key} title={title} items={items} options={options} />
       ))}
     </Box>
   );
@@ -358,33 +374,34 @@ const BandComboSection = memo<{ combos: BandCombination[]; ratType: RatType }>((
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
 
-  const allBands = useMemo(() => {
+  const { allBands, indexedCombos } = useMemo(() => {
     const seen = new Set<string>();
-    const result: { ratType: 'nr' | 'eutra'; band: number }[] = [];
-    for (const c of combos) {
+    const bandList: { ratType: 'nr' | 'eutra'; band: number }[] = [];
+    const indexed = combos.map(c => {
+      const bandKeys = new Set<string>();
       for (const b of c.bands) {
         const k = `${b.ratType}:${b.band}`;
-        if (!seen.has(k)) { seen.add(k); result.push({ ratType: b.ratType, band: b.band }); }
+        bandKeys.add(k);
+        if (!seen.has(k)) { seen.add(k); bandList.push({ ratType: b.ratType, band: b.band }); }
       }
-    }
-    return result.sort((a, b) => a.ratType === b.ratType ? a.band - b.band : a.ratType === 'eutra' ? -1 : 1);
+      const key = c.key || generateCombinationKey(c, { showQam: true, showMimo: true });
+      return { combo: c, lowerKey: key.toLowerCase(), bandKeys };
+    });
+    bandList.sort((a, b) => a.ratType === b.ratType ? a.band - b.band : a.ratType === 'eutra' ? -1 : 1);
+    return { allBands: bandList, indexedCombos: indexed };
   }, [combos]);
 
   const filteredCombos = useMemo(() => {
-    let result = combos;
-    if (selectedBands.size > 0)
-      result = result.filter(c =>
-        [...selectedBands].every(k => {
-          const [rt, bStr] = k.split(':');
-          return c.bands.some(bp => bp.ratType === rt && bp.band === +bStr);
-        })
-      );
-    if (deferredSearch)
-      result = result.filter(c =>
-        generateCombinationKey(c, options).toLowerCase().includes(deferredSearch.toLowerCase())
-      );
-    return result;
-  }, [combos, selectedBands, deferredSearch, options]);
+    const selectedArr = selectedBands.size > 0 ? [...selectedBands] : null;
+    const searchLower = deferredSearch ? deferredSearch.toLowerCase() : '';
+    if (!selectedArr && !searchLower) return combos;
+    return indexedCombos
+      .filter(item =>
+        (!selectedArr || selectedArr.every(k => item.bandKeys.has(k))) &&
+        (!searchLower || item.lowerKey.includes(searchLower))
+      )
+      .map(item => item.combo);
+  }, [combos, indexedCombos, selectedBands, deferredSearch]);
 
   const toggleBand = useCallback((key: string) => {
     setSelectedBands(prev => {
