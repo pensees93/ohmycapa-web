@@ -343,4 +343,219 @@ describe('Stage 3 Compare & Key Generation Unit Tests', () => {
     const res4 = compareCapaFormats(devA4, devB4);
     expect(res4.ratResults.eutra?.comboDiffs.find((d) => d.b)?.status).toBe('b-only-covered');
   });
+
+  it('supports contiguous UL class fallback (UL,c -> UL,a) for LTE and NR', () => {
+    const devA = makeDevice('A', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'c', bandwidthClassUL: 'c', dlMimo: 4, ulMimo: 1, dlQam: 'qam256', ulQam: 'qam256' },
+            ],
+            dlCc: 2,
+            ulCc: 2,
+          },
+        ],
+      },
+      nr: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'nr', band: 41, bandwidthClassDL: 'c', bandwidthClassUL: 'c', dlMimo: 4, ulMimo: 1, dlQam: 'qam256', ulQam: 'qam256' },
+            ],
+            dlCc: 2,
+            ulCc: 2,
+          },
+        ],
+      },
+    });
+    const devB = makeDevice('B', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'c', bandwidthClassUL: 'a', dlMimo: 4, ulMimo: 1, dlQam: 'qam256', ulQam: 'qam256' },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+        ],
+      },
+      nr: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'nr', band: 41, bandwidthClassDL: 'c', bandwidthClassUL: 'a', dlMimo: 4, ulMimo: 1, dlQam: 'qam256', ulQam: 'qam256' },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+
+    const ab = compareCapaFormats(devA, devB);
+    const lteCovered = ab.ratResults.eutra?.comboDiffs.find((d) => d.status === 'b-only-covered');
+    expect(lteCovered).toBeDefined();
+    expect(lteCovered?.paramNotes).toContain('B7 UL-class: a→c');
+    expect(ab.ratResults.eutra?.comboDiffs.find((d) => d.a)?.status).toBe('a-only-unique');
+
+    const nrCovered = ab.ratResults.nr?.comboDiffs.find((d) => d.status === 'b-only-covered');
+    expect(nrCovered).toBeDefined();
+    expect(nrCovered?.paramNotes).toContain('n41 UL-class: a→c');
+    expect(ab.ratResults.nr?.comboDiffs.find((d) => d.a)?.status).toBe('a-only-unique');
+  });
+
+  it('matches repeated same-band carriers independently between DL and UL vectors', () => {
+    const devA1 = makeDevice('A1', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam256' },
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam256' },
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 2, dlQam: 'qam256', ulQam: 'qam256' },
+            ],
+            dlCc: 3,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const devB1 = makeDevice('B1', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4, dlQam: 'qam256', ulQam: 'qam256' },
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'a', dlMimo: 2, dlQam: 'qam256' },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    expect(compareCapaFormats(devA1, devB1).ratResults.eutra?.comboDiffs.find((d) => d.b)?.status).toBe('b-only-covered');
+
+    const devA2 = makeDevice('A2', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam256' },
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 2, dlQam: 'qam256', ulQam: 'qam256' },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const devB2 = makeDevice('B2', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4, dlQam: 'qam256', ulQam: 'qam64' },
+              { ratType: 'eutra', band: 7, bandwidthClassDL: 'a', dlMimo: 2, dlQam: 'qam256' },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const paramDiff = compareCapaFormats(devA2, devB2).ratResults.eutra?.comboDiffs.find((d) => d.b);
+    expect(paramDiff?.status).toBe('b-only-covered');
+    expect(paramDiff?.paramNotes?.some((n) => n.includes('256QAM covers 64QAM'))).toBe(true);
+  });
+
+  it('prefers direct same-caLevel superset over higher-caLevel subset and records compound UL+DL notes', () => {
+    const devA = makeDevice('A', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4 },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'a', dlMimo: 4 },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4 },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'a', dlMimo: 4 },
+              { ratType: 'eutra', band: 5, bandwidthClassDL: 'a', dlMimo: 2 },
+            ],
+            dlCc: 3,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const devB = makeDevice('B', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4 },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'a', dlMimo: 2 },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const priorityDiff = compareCapaFormats(devA, devB).ratResults.eutra?.comboDiffs.find((d) => d.b);
+    expect(priorityDiff?.status).toBe('b-only-covered');
+    expect(priorityDiff?.coveringSupersets?.[0]).toBe('B1a(4)(UL,a)-B3a(4)');
+
+    const devCompoundA = makeDevice('CompA', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4 },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4 },
+              { ratType: 'eutra', band: 5, bandwidthClassDL: 'a', dlMimo: 2 },
+            ],
+            dlCc: 3,
+            ulCc: 2,
+          },
+        ],
+      },
+    });
+    const devCompoundB = makeDevice('CompB', {
+      eutra: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'eutra', band: 1, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4 },
+              { ratType: 'eutra', band: 3, bandwidthClassDL: 'a', dlMimo: 4 },
+            ],
+            dlCc: 2,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const compoundDiff = compareCapaFormats(devCompoundA, devCompoundB).ratResults.eutra?.comboDiffs.find((d) => d.b);
+    expect(compoundDiff?.status).toBe('b-only-covered');
+    expect(compoundDiff?.paramNotes).toContain('UL B3 carrier added coverage (1UL→2UL)');
+  });
 });

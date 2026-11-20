@@ -264,7 +264,7 @@ function bwClassCovers(smallCls: string | undefined, largeCls: string | undefine
   return sIdx >= 0 && lIdx >= 0 && lIdx >= sIdx;
 }
 
-function bandEntryCovers(
+function dlEntryCovers(
   s: BandParameter,
   l: BandParameter,
   opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {},
@@ -273,7 +273,6 @@ function bandEntryCovers(
   if (s.ratType !== l.ratType || s.band !== l.band) return false;
   const { showQam = true, showMimo = true } = opts;
 
-  // 1. DL Bandwidth Class dominance
   if (requireSameDlBwClass) {
     if ((s.bandwidthClassDL || 'a').toLowerCase() !== (l.bandwidthClassDL || 'a').toLowerCase()) {
       return false;
@@ -282,22 +281,31 @@ function bandEntryCovers(
     return false;
   }
 
-  // 2. UL Carrier & UL Bandwidth Class dominance
-  if (s.bandwidthClassUL) {
-    if (!l.bandwidthClassUL) return false;
-    if (!bwClassCovers(s.bandwidthClassUL, l.bandwidthClassUL)) return false;
+  if (showMimo && (l.dlMimo ?? 0) < (s.dlMimo ?? 0)) return false;
+  if (showQam && qamRank(l.dlQam) < qamRank(s.dlQam)) return false;
+  return true;
+}
+
+function ulEntryCovers(
+  s: BandParameter,
+  l: BandParameter,
+  opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {},
+  requireSameUlBwClass = false
+): boolean {
+  if (s.ratType !== l.ratType || s.band !== l.band) return false;
+  if (!s.bandwidthClassUL || !l.bandwidthClassUL) return false;
+  const { showQam = true, showMimo = true } = opts;
+
+  if (requireSameUlBwClass) {
+    if (s.bandwidthClassUL.toLowerCase() !== l.bandwidthClassUL.toLowerCase()) {
+      return false;
+    }
+  } else if (!bwClassCovers(s.bandwidthClassUL, l.bandwidthClassUL)) {
+    return false;
   }
 
-  // 3. Per-entry DL/UL MIMO & QAM dominance
-  if (showMimo) {
-    if ((l.dlMimo ?? 0) < (s.dlMimo ?? 0)) return false;
-    if (s.bandwidthClassUL && (l.ulMimo ?? 1) < (s.ulMimo ?? 1)) return false;
-  }
-  if (showQam) {
-    if (qamRank(l.dlQam) < qamRank(s.dlQam)) return false;
-    if (s.bandwidthClassUL && qamRank(l.ulQam) < qamRank(s.ulQam)) return false;
-  }
-
+  if (showMimo && (l.ulMimo ?? 1) < (s.ulMimo ?? 1)) return false;
+  if (showQam && qamRank(l.ulQam) < qamRank(s.ulQam)) return false;
   return true;
 }
 
@@ -306,28 +314,34 @@ interface MatchedBandPair {
   l: BandParameter;
 }
 
+interface CoveringMatchResult {
+  dlPairs: MatchedBandPair[];
+  ulPairs: MatchedBandPair[];
+}
+
 /**
- * Finds a 1-to-1 matching from each BandParameter in smallBands to a distinct
- * BandParameter in largeBands satisfying bandEntryCovers(s, l, opts).
+ * Matches each item in smallItems 1-to-1 to a distinct item in largeItems
+ * within the same (ratType, band) group satisfying coversFn.
  */
-function matchCoveringBandEntries(
-  smallBands: BandParameter[],
-  largeBands: BandParameter[],
-  opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {},
-  requireSameDlBwClass = false
+function matchBandGroups(
+  smallItems: BandParameter[],
+  largeItems: BandParameter[],
+  scoreFn: (b: BandParameter) => number,
+  coversFn: (s: BandParameter, l: BandParameter) => boolean
 ): MatchedBandPair[] | null {
-  if (smallBands.length > largeBands.length) return null;
+  if (smallItems.length > largeItems.length) return null;
+  if (smallItems.length === 0) return [];
 
   const sGroups = new Map<string, BandParameter[]>();
   const lGroups = new Map<string, BandParameter[]>();
 
-  for (const b of smallBands) {
+  for (const b of smallItems) {
     const k = `${b.ratType}:${b.band}`;
     const arr = sGroups.get(k);
     if (arr) arr.push(b);
     else sGroups.set(k, [b]);
   }
-  for (const b of largeBands) {
+  for (const b of largeItems) {
     const k = `${b.ratType}:${b.band}`;
     const arr = lGroups.get(k);
     if (arr) arr.push(b);
@@ -339,24 +353,18 @@ function matchCoveringBandEntries(
     if (!lList || lList.length < sList.length) return null;
   }
 
-  const entryScore = (b: BandParameter) =>
-    (b.bandwidthClassUL ? 1000 : 0) +
-    getBwClassCcCount(b.bandwidthClassDL) * 100 +
-    (b.dlMimo ?? 0) * 10 +
-    qamRank(b.dlQam);
-
   const matched: MatchedBandPair[] = [];
 
   for (const [k, rawSList] of sGroups) {
     const rawLList = lGroups.get(k)!;
     if (rawSList.length === 1 && rawLList.length === 1) {
-      if (!bandEntryCovers(rawSList[0], rawLList[0], opts, requireSameDlBwClass)) return null;
+      if (!coversFn(rawSList[0], rawLList[0])) return null;
       matched.push({ s: rawSList[0], l: rawLList[0] });
       continue;
     }
 
-    const sList = [...rawSList].sort((a, b) => entryScore(b) - entryScore(a));
-    const lList = [...rawLList].sort((a, b) => entryScore(b) - entryScore(a));
+    const sList = [...rawSList].sort((a, b) => scoreFn(b) - scoreFn(a));
+    const lList = [...rawLList].sort((a, b) => scoreFn(b) - scoreFn(a));
     const usedL = new Array<boolean>(lList.length).fill(false);
     const groupPairs: MatchedBandPair[] = [];
 
@@ -365,7 +373,7 @@ function matchCoveringBandEntries(
       const sEntry = sList[sIdx];
       for (let lIdx = 0; lIdx < lList.length; lIdx++) {
         if (usedL[lIdx]) continue;
-        if (bandEntryCovers(sEntry, lList[lIdx], opts, requireSameDlBwClass)) {
+        if (coversFn(sEntry, lList[lIdx])) {
           usedL[lIdx] = true;
           groupPairs.push({ s: sEntry, l: lList[lIdx] });
           if (backtrack(sIdx + 1)) return true;
@@ -383,14 +391,51 @@ function matchCoveringBandEntries(
   return matched;
 }
 
+/**
+ * Matches DL band entries and UL band entries independently within each (ratType, band)
+ * group so repeated non-contiguous carriers (e.g. B7a+B7a) are not tied to one vendor's
+ * arbitrary UL attachment order.
+ */
+function matchCoveringBandEntries(
+  smallBands: BandParameter[],
+  largeBands: BandParameter[],
+  opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {},
+  requireSameDlBwClass = false,
+  requireSameUlBwClass = false
+): CoveringMatchResult | null {
+  const dlScore = (b: BandParameter) =>
+    getBwClassCcCount(b.bandwidthClassDL) * 100 + (b.dlMimo ?? 0) * 10 + qamRank(b.dlQam);
+  const dlPairs = matchBandGroups(
+    smallBands,
+    largeBands,
+    dlScore,
+    (s, l) => dlEntryCovers(s, l, opts, requireSameDlBwClass)
+  );
+  if (!dlPairs) return null;
+
+  const smallUl = smallBands.filter((b) => Boolean(b.bandwidthClassUL));
+  const largeUl = largeBands.filter((b) => Boolean(b.bandwidthClassUL));
+  const ulScore = (b: BandParameter) =>
+    getBwClassCcCount(b.bandwidthClassUL) * 100 + (b.ulMimo ?? 1) * 10 + qamRank(b.ulQam);
+  const ulPairs = matchBandGroups(
+    smallUl,
+    largeUl,
+    ulScore,
+    (s, l) => ulEntryCovers(s, l, opts, requireSameUlBwClass)
+  );
+  if (!ulPairs) return null;
+
+  return { dlPairs, ulPairs };
+}
+
 function collectCoverageParamNotes(
-  pairs: MatchedBandPair[],
+  match: CoveringMatchResult,
   opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {}
 ): string[] {
   const { showQam = true, showMimo = true } = opts;
   const notes: string[] = [];
 
-  for (const { s, l } of pairs) {
+  for (const { s, l } of match.dlPairs) {
     const prefix = s.ratType === 'nr' ? `n${s.band}` : `B${s.band}`;
     const sDlCls = s.bandwidthClassDL ?? 'a';
     const lDlCls = l.bandwidthClassDL ?? 'a';
@@ -405,24 +450,39 @@ function collectCoverageParamNotes(
       const lLabel = QAM_LABELS[qamRank(l.dlQam)] || String(l.dlQam ?? '');
       notes.push(`${prefix} DL-QAM: ${sLabel}→${lLabel}`);
     }
-    if (s.bandwidthClassUL && l.bandwidthClassUL) {
-      if (s.bandwidthClassUL.toLowerCase() !== l.bandwidthClassUL.toLowerCase()) {
-        notes.push(`${prefix} UL-class: ${s.bandwidthClassUL}→${l.bandwidthClassUL}`);
-      }
-      const sUlMimo = s.ulMimo ?? 1;
-      const lUlMimo = l.ulMimo ?? 1;
-      if (showMimo && lUlMimo > sUlMimo) {
-        notes.push(`${prefix} UL-MIMO: ${sUlMimo}→${lUlMimo}`);
-      }
-      if (showQam && qamRank(l.ulQam) > qamRank(s.ulQam)) {
-        const sLabel = QAM_LABELS[qamRank(s.ulQam)] || String(s.ulQam ?? '64QAM');
-        const lLabel = QAM_LABELS[qamRank(l.ulQam)] || String(l.ulQam ?? '');
-        notes.push(`${prefix} UL-QAM: ${sLabel}→${lLabel}`);
-      }
+  }
+
+  for (const { s, l } of match.ulPairs) {
+    if (!s.bandwidthClassUL || !l.bandwidthClassUL) continue;
+    const prefix = s.ratType === 'nr' ? `n${s.band}` : `B${s.band}`;
+    if (s.bandwidthClassUL.toLowerCase() !== l.bandwidthClassUL.toLowerCase()) {
+      notes.push(`${prefix} UL-class: ${s.bandwidthClassUL}→${l.bandwidthClassUL}`);
+    }
+    const sUlMimo = s.ulMimo ?? 1;
+    const lUlMimo = l.ulMimo ?? 1;
+    if (showMimo && lUlMimo > sUlMimo) {
+      notes.push(`${prefix} UL-MIMO: ${sUlMimo}→${lUlMimo}`);
+    }
+    if (showQam && qamRank(l.ulQam) > qamRank(s.ulQam)) {
+      const sLabel = QAM_LABELS[qamRank(s.ulQam)] || String(s.ulQam ?? '64QAM');
+      const lLabel = QAM_LABELS[qamRank(l.ulQam)] || String(l.ulQam ?? '');
+      notes.push(`${prefix} UL-QAM: ${sLabel}→${lLabel}`);
     }
   }
 
   return notes;
+}
+
+function appendExtraUlCoverageNote(notes: string[], fewerCache: ComboCache, moreCache: ComboCache): void {
+  const extraUl = Object.keys(moreCache.ulCounts.m)
+    .filter((k) => (moreCache.ulCounts.m[k] ?? 0) > (fewerCache.ulCounts.m[k] ?? 0))
+    .map((k) => {
+      const [rt, band] = k.split(':');
+      return rt === 'nr' ? `n${band}` : `B${band}`;
+    });
+  if (extraUl.length > 0) {
+    notes.push(`UL ${extraUl.join('+')} carrier added coverage (${fewerCache.ulLevel}UL→${moreCache.ulLevel}UL)`);
+  }
 }
 
 /**
@@ -445,17 +505,20 @@ function isSubsetCombo(
     if ((largeCache.ulCounts.m[k] ?? 0) < count) return { isSubset: false, paramNotes: [] };
   }
 
-  const pairs = matchCoveringBandEntries(smallCache.combo.bands, largeCache.combo.bands, opts, false);
-  if (!pairs) return { isSubset: false, paramNotes: [] };
+  const match = matchCoveringBandEntries(smallCache.combo.bands, largeCache.combo.bands, opts, false, false);
+  if (!match) return { isSubset: false, paramNotes: [] };
 
-  return { isSubset: true, paramNotes: collectCoverageParamNotes(pairs, opts) };
+  const paramNotes = collectCoverageParamNotes(match, opts);
+  appendExtraUlCoverageNote(paramNotes, smallCache, largeCache);
+  return { isSubset: true, paramNotes };
 }
 
 /**
- * UL carrier subset coverage (3GPP TS 36.101 §5.5A / TS 36.306 §4.3.5.12)
+ * UL carrier & contiguous UL class subset coverage (3GPP TS 36.101 §5.5A / TS 36.306 §4.3.5.12)
  *
- * Between two combos with the same DL band & BW class set, the one with more UL carriers
- * covers the one with fewer if all existing DL/UL entries also dominate MIMO/QAM.
+ * Between two combos with the same DL band & BW class set, the one with more UL CCs
+ * (extra UL carriers or wider contiguous UL BW class e.g. UL,c ⊇ UL,a) covers the smaller
+ * if all existing DL/UL entries also dominate MIMO/QAM.
  */
 function isUlCoveredCombo(
   fewerCache: ComboCache,
@@ -471,23 +534,19 @@ function isUlCoveredCombo(
   const fewer = fewerCache.ulCounts;
   const more = moreCache.ulCounts;
 
-  if (fewer.total >= more.total) return { isCovered: false, paramNotes: [] };
+  if (fewerCache.ulLevel >= moreCache.ulLevel && fewer.total >= more.total) {
+    return { isCovered: false, paramNotes: [] };
+  }
 
   for (const [k, count] of Object.entries(fewer.m)) {
     if ((more.m[k] ?? 0) < count) return { isCovered: false, paramNotes: [] };
   }
 
-  const pairs = matchCoveringBandEntries(fewerCache.combo.bands, moreCache.combo.bands, opts, true);
-  if (!pairs) return { isCovered: false, paramNotes: [] };
+  const match = matchCoveringBandEntries(fewerCache.combo.bands, moreCache.combo.bands, opts, true, false);
+  if (!match) return { isCovered: false, paramNotes: [] };
 
-  const paramNotes = collectCoverageParamNotes(pairs, opts);
-
-  const extraUl = Object.keys(more.m)
-    .filter(k => (more.m[k] ?? 0) > (fewer.m[k] ?? 0))
-    .map(k => { const [rt, band] = k.split(':'); return rt === 'nr' ? `n${band}` : `B${band}`; });
-  if (extraUl.length > 0) {
-    paramNotes.push(`UL ${extraUl.join('+')} carrier added coverage (${fewer.total}UL→${more.total}UL)`);
-  }
+  const paramNotes = collectCoverageParamNotes(match, opts);
+  appendExtraUlCoverageNote(paramNotes, fewerCache, moreCache);
 
   return { isCovered: true, paramNotes };
 }
@@ -545,6 +604,7 @@ function isParamCoveredCombo(
   opts: Pick<ComboDisplayOptions, 'showQam' | 'showMimo'> = {}
 ): { isCovered: boolean; paramNotes: string[] } {
   if (weakerCache.caLevel !== strongerCache.caLevel) return { isCovered: false, paramNotes: [] };
+  if (weakerCache.ulLevel !== strongerCache.ulLevel) return { isCovered: false, paramNotes: [] };
 
   // O(1) fingerprint check
   if (weakerCache.bandFingerprint !== strongerCache.bandFingerprint) return { isCovered: false, paramNotes: [] };
@@ -557,7 +617,7 @@ function isParamCoveredCombo(
     if ((strongerUL.m[k] ?? 0) !== count) return { isCovered: false, paramNotes: [] };
   }
 
-  if (!matchCoveringBandEntries(weakerCache.combo.bands, strongerCache.combo.bands, opts, true)) {
+  if (!matchCoveringBandEntries(weakerCache.combo.bands, strongerCache.combo.bands, opts, true, true)) {
     return { isCovered: false, paramNotes: [] };
   }
 
@@ -831,71 +891,56 @@ function compareCombos(
   const maxBLevel = bByLevel.size > 0 ? Math.max(...bByLevel.keys()) : 0;
   const maxALevel = aByLevel.size > 0 ? Math.max(...aByLevel.keys()) : 0;
 
+  const findCoveringSuperset = (
+    targetCache: ComboCache,
+    candidateByLevel: Map<number, ComboCache[]>,
+    maxCandidateLevel: number
+  ): { supersets: string[]; notes: string[] } | null => {
+    const sameLevel = candidateByLevel.get(targetCache.caLevel) ?? [];
+
+    // 1. Param-covered: same caLevel + DL/UL band/class set, higher MIMO/QAM
+    for (const cand of sameLevel) {
+      const r = isParamCoveredCombo(targetCache, cand, opts);
+      if (r.isCovered) {
+        return { supersets: [generateCombinationKey(cand.combo, opts)], notes: r.paramNotes };
+      }
+    }
+
+    // 2. UL-covered: same caLevel + DL band/class set, more UL carriers or wider contiguous UL class
+    for (const cand of sameLevel) {
+      const r = isUlCoveredCombo(targetCache, cand, opts);
+      if (r.isCovered) {
+        return { supersets: [generateCombinationKey(cand.combo, opts)], notes: r.paramNotes };
+      }
+    }
+
+    // 3. Subset-covered: strictly larger caLevel (more DL CCs/bands or wider DL BW class)
+    for (let lvl = targetCache.caLevel + 1; lvl <= maxCandidateLevel; lvl++) {
+      for (const cand of (candidateByLevel.get(lvl) ?? [])) {
+        const r = isSubsetCombo(targetCache, cand, opts);
+        if (r.isSubset) {
+          return { supersets: [generateCombinationKey(cand.combo, opts)], notes: r.paramNotes };
+        }
+      }
+    }
+
+    return null;
+  };
+
   for (const diff of diffs) {
     if (diff.status === 'a-only-unique' && diff.a) {
-      const diffCache = cacheA.get(diff.key!)!;
-      const supersets: string[] = [];
-      const notes: string[] = [];
-
-      // Subset: search B combos with strictly larger caLevel (early-exit on first match)
-      outer_a: for (let lvl = diffCache.caLevel + 1; lvl <= maxBLevel; lvl++) {
-        for (const bc of (bByLevel.get(lvl) ?? [])) {
-          const r = isSubsetCombo(diffCache, bc, opts);
-          if (r.isSubset) { supersets.push(generateCombinationKey(bc.combo, opts)); notes.push(...r.paramNotes); break outer_a; }
-        }
-      }
-
-      // UL-covered: same caLevel, more UL carriers
-      if (supersets.length === 0) {
-        for (const bc of (bByLevel.get(diffCache.caLevel) ?? [])) {
-          const r = isUlCoveredCombo(diffCache, bc, opts);
-          if (r.isCovered) { supersets.push(generateCombinationKey(bc.combo, opts)); notes.push(...r.paramNotes); break; }
-        }
-      }
-
-      // Param-covered: same caLevel + band set, higher DL MIMO on all bands
-      if (supersets.length === 0) {
-        for (const bc of (bByLevel.get(diffCache.caLevel) ?? [])) {
-          const r = isParamCoveredCombo(diffCache, bc, opts);
-          if (r.isCovered) { supersets.push(generateCombinationKey(bc.combo, opts)); notes.push(...r.paramNotes); break; }
-        }
-      }
-
-      if (supersets.length > 0) {
+      const hit = findCoveringSuperset(cacheA.get(diff.key!)!, bByLevel, maxBLevel);
+      if (hit) {
         diff.status = 'a-only-covered';
-        diff.coveringSupersets = [...new Set(supersets)];
-        diff.paramNotes = [...new Set(notes)];
+        diff.coveringSupersets = [...new Set(hit.supersets)];
+        diff.paramNotes = [...new Set(hit.notes)];
       }
     } else if (diff.status === 'b-only-unique' && diff.b) {
-      const diffCache = cacheB.get(diff.key!)!;
-      const supersets: string[] = [];
-      const notes: string[] = [];
-
-      outer_b: for (let lvl = diffCache.caLevel + 1; lvl <= maxALevel; lvl++) {
-        for (const ac of (aByLevel.get(lvl) ?? [])) {
-          const r = isSubsetCombo(diffCache, ac, opts);
-          if (r.isSubset) { supersets.push(generateCombinationKey(ac.combo, opts)); notes.push(...r.paramNotes); break outer_b; }
-        }
-      }
-
-      if (supersets.length === 0) {
-        for (const ac of (aByLevel.get(diffCache.caLevel) ?? [])) {
-          const r = isUlCoveredCombo(diffCache, ac, opts);
-          if (r.isCovered) { supersets.push(generateCombinationKey(ac.combo, opts)); notes.push(...r.paramNotes); break; }
-        }
-      }
-
-      if (supersets.length === 0) {
-        for (const ac of (aByLevel.get(diffCache.caLevel) ?? [])) {
-          const r = isParamCoveredCombo(diffCache, ac, opts);
-          if (r.isCovered) { supersets.push(generateCombinationKey(ac.combo, opts)); notes.push(...r.paramNotes); break; }
-        }
-      }
-
-      if (supersets.length > 0) {
+      const hit = findCoveringSuperset(cacheB.get(diff.key!)!, aByLevel, maxALevel);
+      if (hit) {
         diff.status = 'b-only-covered';
-        diff.coveringSupersets = [...new Set(supersets)];
-        diff.paramNotes = [...new Set(notes)];
+        diff.coveringSupersets = [...new Set(hit.supersets)];
+        diff.paramNotes = [...new Set(hit.notes)];
       }
     }
   }
