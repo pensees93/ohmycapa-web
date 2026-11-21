@@ -1,12 +1,18 @@
 /**
  * Stage 2 Unified Feature Extractor.
  * Builds canonical feature maps from vendor-neutral ASTs and produces FeatureLeaf[]
- * including FGI indicators, ROHC profiles, and UTRA security capabilities.
+ * including FGI indicators, ROHC profiles, UTRA security capabilities, and auto-classified features.
  */
 
 import type { Asn1Record } from '../types/astTypes';
 import type { FeatureKind, FeatureLeaf, RatFeatures } from '../types/capaTypes';
-import { extractBitStringContent, extractNumber, findInExtensions, isRecord } from './helpers';
+import {
+  extractBitStringContent,
+  extractNumber,
+  findInExtensions,
+  isRecord,
+  utraBandToNumber,
+} from './helpers';
 import { collectUnclassifiedFeatures } from './unclassifiedCollector';
 import {
   EUTRA_FEATURE_SPECS,
@@ -40,18 +46,45 @@ const ROHC_PROFILE_NAMES: Record<string, string> = {
   profile0x0104: 'ROHC Profile 0x0104 (RFC 5225, IP/ESP)',
 };
 
+const COMPOUND_ENUM_RANKS: Record<string, number> = {
+  // DMRS types
+  type1and2: 2,
+  type1: 1,
+  type2: 1,
+  // Codebook modes
+  mode1andmode2: 3,
+  mode1: 2,
+  mode2: 1,
+  // Intra-band EN-DC / CA support
+  both: 3,
+  'non-contiguous': 2,
+  contiguous: 1,
+  // Coherence
+  fullcoherent: 3,
+  partialandnoncoherent: 2,
+  noncoherent: 1,
+  // GPS
+  'bothnetworkandue-based': 3,
+  'ue-based': 2,
+  networkbased: 2,
+  nonetworkassistedgps: 1,
+  // PDCCH monitoring
+  'withoutdci-gap': 2,
+  'withdci-gap': 1,
+};
+
 const featureMapCache = new WeakMap<Asn1Record, Map<string, unknown>>();
+const multiValueCache = new WeakMap<Asn1Record, Map<string, unknown[]>>();
 
 function isTransparentKey(key: string): boolean {
   return (
     TRANSPARENT_CONTAINERS.has(key) ||
-    key.includes('Add-UE-EUTRA-Capabilities-v') ||
     /^UE-EUTRA-Capability-v.*-IEs$/.test(key)
   );
 }
 
 /**
- * Strip structural segments (`nonCriticalExtension`, `lateNonCriticalExtension`, `present`)
+ * Strip structural segments (`nonCriticalExtension`, `lateNonCriticalExtension`, `present`, `CONTAINING`)
  * from a spec path so canonical lookups work identically across vendors.
  */
 export function normalizeSpecLookupPath(path: string): string {
@@ -61,15 +94,128 @@ export function normalizeSpecLookupPath(path: string): string {
     .join('.');
 }
 
+function unwrapSingleChoiceValue(raw: unknown): unknown {
+  if (!isRecord(raw)) return raw;
+  if ('supported' in raw) return raw['supported'];
+  const keys = Object.keys(raw);
+  if (keys.length === 1 && !isRecord(raw[keys[0]])) {
+    return raw[keys[0]];
+  }
+  return raw;
+}
+
+function parsePowerClassRank(val: string): number | undefined {
+  const lower = val.trim().toLowerCase().replace(/dot/g, '.');
+  const m = lower.match(/^(?:pc|p?class|powerclass)[_-]?(\d+(?:\.\d+)?)$/);
+  if (!m) return undefined;
+  const num = Number(m[1]);
+  if (!Number.isFinite(num) || num <= 0) return undefined;
+  // Lower PC number (e.g. pc1dot5 < pc2 < pc3) represents higher TX power capability
+  return 100 - num;
+}
+
+function parseOrderedEnumValue(val: string): number | undefined {
+  const trimmed = val.trim();
+  const m = trimmed.match(/^(?:rel|n|p|upto|cs|b|kbps|tb|tf|am|sym|s|mhz|mws|kb|e)(\d+(?:dot\d+)?)$/i);
+  if (!m) return undefined;
+  const num = Number(m[1].replace(/dot/i, '.'));
+  return Number.isFinite(num) ? num : undefined;
+}
+
+function bitStringPopCount(val: string): number | undefined {
+  const m = val.match(/^'([01]+)'B$/i);
+  if (!m) return undefined;
+  let count = 0;
+  for (const ch of m[1]) {
+    if (ch === '1') count++;
+  }
+  return count;
+}
+
+function isPositiveSupportVal(v: unknown): boolean {
+  return v === true || v === 'supported' || v === 'true';
+}
+
+function isNegativeSupportVal(v: unknown): boolean {
+  return v === false || v === 'notSupported' || v === 'false';
+}
+
 /**
- * Build a flat canonical path -> value map for a PDU tree.
- * Traverses all array items so per-band features are discovered even beyond element 0.
+ * Select the stronger / superset 3GPP capability value when multiple array entries
+ * (e.g., per-band or per-variant lists) share the same canonical path.
+ */
+export function pickStrongerRawValue(existing: unknown, incoming: unknown): unknown {
+  if (existing === undefined || existing === null) return incoming;
+  if (incoming === undefined || incoming === null) return existing;
+
+  if (Array.isArray(existing) || Array.isArray(incoming)) {
+    if (Array.isArray(existing) && existing.length === 0 && Array.isArray(incoming) && incoming.length > 0) {
+      return incoming;
+    }
+    return existing;
+  }
+
+  const uEx = unwrapSingleChoiceValue(existing);
+  const uIn = unwrapSingleChoiceValue(incoming);
+
+  if (isRecord(uEx) || isRecord(uIn)) {
+    if (isRecord(uEx) && Object.keys(uEx).length === 0 && !isRecord(uIn)) return incoming;
+    return existing;
+  }
+
+  // 1. Support flags: positive support always beats negative/absent
+  if (isPositiveSupportVal(uIn) && isNegativeSupportVal(uEx)) return incoming;
+  if (isPositiveSupportVal(uEx) && isNegativeSupportVal(uIn)) return existing;
+
+  // 2. Numeric capabilities: max wins
+  if (typeof uEx === 'number' && typeof uIn === 'number') {
+    return uIn > uEx ? incoming : existing;
+  }
+
+  if (typeof uEx === 'string' && typeof uIn === 'string') {
+    // 3. Power Class: pc1dot5 > pc2 > pc3 > pc4
+    const pcEx = parsePowerClassRank(uEx);
+    const pcIn = parsePowerClassRank(uIn);
+    if (pcEx !== undefined && pcIn !== undefined) {
+      return pcIn > pcEx ? incoming : existing;
+    }
+
+    // 4. Bit strings: higher number of enabled bits wins
+    const popEx = bitStringPopCount(uEx);
+    const popIn = bitStringPopCount(uIn);
+    if (popEx !== undefined && popIn !== undefined) {
+      return popIn > popEx ? incoming : existing;
+    }
+
+    // 5. Compound 3GPP capability enums
+    const compEx = COMPOUND_ENUM_RANKS[uEx.toLowerCase()];
+    const compIn = COMPOUND_ENUM_RANKS[uIn.toLowerCase()];
+    if (compEx !== undefined && compIn !== undefined) {
+      return compIn > compEx ? incoming : existing;
+    }
+
+    // 6. Ordered numeric-prefixed enums (n8/n16, p2/p32, upto2/upto4, cs16/cs24, etc.)
+    const ordEx = parseOrderedEnumValue(uEx);
+    const ordIn = parseOrderedEnumValue(uIn);
+    if (ordEx !== undefined && ordIn !== undefined) {
+      return ordIn > ordEx ? incoming : existing;
+    }
+  }
+
+  return existing;
+}
+
+/**
+ * Build a flat canonical path -> max/superset value map for a PDU tree.
+ * Traverses all array items so per-band / per-variant capabilities aggregate to the device's max capability,
+ * and caches all per-path values for list-type extraction.
  */
 export function buildCanonicalFeatureMap(pdu: Asn1Record): Map<string, unknown> {
   const cached = featureMapCache.get(pdu);
   if (cached) return cached;
 
   const map = new Map<string, unknown>();
+  const allVals = new Map<string, unknown[]>();
   const stack: Array<{ node: unknown; path: string }> = [{ node: pdu, path: '' }];
 
   while (stack.length > 0) {
@@ -92,10 +238,16 @@ export function buildCanonicalFeatureMap(pdu: Asn1Record): Map<string, unknown> 
       const fullPath = path ? `${path}.${key}` : key;
       if (!map.has(fullPath)) {
         map.set(fullPath, val);
-      } else if (val === 'supported' || val === true) {
-        // When aggregating across array elements (e.g. per-band flags), prefer positive support
-        map.set(fullPath, val);
+      } else {
+        map.set(fullPath, pickStrongerRawValue(map.get(fullPath), val));
       }
+
+      let bucket = allVals.get(fullPath);
+      if (!bucket) {
+        bucket = [];
+        allVals.set(fullPath, bucket);
+      }
+      bucket.push(val);
 
       if (Array.isArray(val)) {
         for (let idx = val.length - 1; idx >= 0; idx--) {
@@ -110,17 +262,77 @@ export function buildCanonicalFeatureMap(pdu: Asn1Record): Map<string, unknown> 
   }
 
   featureMapCache.set(pdu, map);
+  multiValueCache.set(pdu, allVals);
   return map;
 }
 
-function unwrapSingleChoiceValue(raw: unknown): unknown {
-  if (!isRecord(raw)) return raw;
-  if ('supported' in raw) return raw['supported'];
-  const keys = Object.keys(raw);
-  if (keys.length === 1 && !isRecord(raw[keys[0]])) {
-    return raw[keys[0]];
+function sortAndDedupeNumbers(nums: number[], leafName: string): number[] {
+  const unique = new Set<number>();
+  for (const n of nums) {
+    // 3GPP TS 25.331: radioFrequencyBandEUTRA = 64 is a Rel-9 placeholder for extended bands (>64)
+    if (leafName === 'radioFrequencyBandEUTRA' && n === 64) continue;
+    unique.add(n);
   }
-  return raw;
+  return [...unique].sort((a, b) => a - b);
+}
+
+function sortAndDedupeStrings(strs: string[]): string[] {
+  const unique = [...new Set(strs)];
+  return unique.sort((a, b) => {
+    const ua = utraBandToNumber(a);
+    const ub = utraBandToNumber(b);
+    if (ua !== undefined && ub !== undefined && ua !== ub) {
+      return ua - ub;
+    }
+    return a.localeCompare(b);
+  });
+}
+
+function extractNumbersFromRaw(raw: unknown, leafName: string): number[] {
+  const out: number[] = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      out.push(...extractNumbersFromRaw(item, leafName));
+    }
+    return out;
+  }
+  const direct = extractNumber(raw);
+  if (direct !== undefined) {
+    out.push(direct);
+    return out;
+  }
+  if (typeof raw === 'string') {
+    const cleaned = Number(raw.trim().replace(/^n(?=\d)/i, ''));
+    if (Number.isFinite(cleaned)) out.push(cleaned);
+    return out;
+  }
+  if (isRecord(raw)) {
+    const candidate =
+      raw[leafName] ??
+      (leafName.startsWith('bandNR') ? raw['bandNR'] ?? raw['bandNR-r15'] : undefined);
+    if (candidate !== undefined) {
+      out.push(...extractNumbersFromRaw(candidate, leafName));
+    }
+  }
+  return out;
+}
+
+function extractStringsFromRaw(raw: unknown, leafName: string): string[] {
+  const out: string[] = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      out.push(...extractStringsFromRaw(item, leafName));
+    }
+    return out;
+  }
+  if (typeof raw === 'string') {
+    out.push(raw);
+    return out;
+  }
+  if (isRecord(raw) && raw[leafName] !== undefined) {
+    out.push(String(raw[leafName]));
+  }
+  return out;
 }
 
 /**
@@ -142,12 +354,15 @@ export function extractLeafValue(
       if (typeof unwrapped === 'boolean') return unwrapped;
       if (unwrapped === 'supported' || unwrapped === 'true') return true;
       if (unwrapped === 'notSupported' || unwrapped === 'false') return false;
+      if (isRecord(unwrapped) && Object.keys(unwrapped).length === 0) return true;
       return true;
     }
 
     case 'enum': {
       const unwrapped = unwrapSingleChoiceValue(raw);
-      return typeof unwrapped === 'string' ? unwrapped : undefined;
+      if (typeof unwrapped === 'string') return unwrapped;
+      if (typeof unwrapped === 'boolean') return String(unwrapped);
+      return undefined;
     }
 
     case 'number': {
@@ -162,46 +377,13 @@ export function extractLeafValue(
     }
 
     case 'stringList': {
-      if (Array.isArray(raw)) {
-        const out: string[] = [];
-        for (const item of raw) {
-          if (typeof item === 'string') {
-            out.push(item);
-          } else if (isRecord(item) && item[leafName] !== undefined) {
-            out.push(String(item[leafName]));
-          }
-        }
-        return out.length > 0 ? out : undefined;
-      }
-      return typeof raw === 'string' ? [raw] : undefined;
+      const strs = sortAndDedupeStrings(extractStringsFromRaw(raw, leafName));
+      return strs.length > 0 ? strs : undefined;
     }
 
     case 'numberList': {
-      if (Array.isArray(raw)) {
-        const out: number[] = [];
-        for (const item of raw) {
-          const direct = extractNumber(item);
-          if (direct !== undefined) {
-            out.push(direct);
-            continue;
-          }
-          if (typeof item === 'string') {
-            const cleaned = Number(item.trim().replace(/^n(?=\d)/i, ''));
-            if (Number.isFinite(cleaned)) out.push(cleaned);
-            continue;
-          }
-          if (isRecord(item)) {
-            const candidate =
-              item[leafName] ??
-              (leafName.startsWith('bandNR') ? item['bandNR'] ?? item['bandNR-r15'] : undefined);
-            const num = extractNumber(candidate);
-            if (num !== undefined) out.push(num);
-          }
-        }
-        return out.length > 0 ? out : undefined;
-      }
-      const single = extractLeafValue(raw, 'number', leafName);
-      return typeof single === 'number' ? [single] : undefined;
+      const nums = sortAndDedupeNumbers(extractNumbersFromRaw(raw, leafName), leafName);
+      return nums.length > 0 ? nums : undefined;
     }
 
     default:
@@ -211,14 +393,7 @@ export function extractLeafValue(
 
 function buildLeavesFromSpecs(pdu: Asn1Record, specs: FeatureSpec[]): FeatureLeaf[] {
   const map = buildCanonicalFeatureMap(pdu);
-
-  const leafLookup = new Map<string, unknown>();
-  for (const [fullPath, val] of map.entries()) {
-    const leafName = fullPath.split('.').pop()!;
-    if (!leafLookup.has(leafName) || val === 'supported' || val === true) {
-      leafLookup.set(leafName, val);
-    }
-  }
+  const allValsMap = multiValueCache.get(pdu);
 
   const leaves: FeatureLeaf[] = [];
   const seenKeys = new Set<string>();
@@ -227,26 +402,41 @@ function buildLeavesFromSpecs(pdu: Asn1Record, specs: FeatureSpec[]): FeatureLea
     if (seenKeys.has(dedupeKey)) continue;
 
     const candidatePaths = [spec.path, ...(spec.pathAlternatives ?? [])];
-    let raw: unknown;
+    let value: FeatureLeaf['value'];
 
-    for (const candidate of candidatePaths) {
-      const normalized = normalizeSpecLookupPath(candidate);
-      if (map.has(normalized)) {
-        raw = map.get(normalized);
-        break;
+    if (spec.kind === 'numberList') {
+      const collected: number[] = [];
+      for (const candidate of candidatePaths) {
+        const normalized = normalizeSpecLookupPath(candidate);
+        const raws = allValsMap?.get(normalized) ?? (map.has(normalized) ? [map.get(normalized)] : []);
+        for (const r of raws) {
+          collected.push(...extractNumbersFromRaw(r, spec.leaf));
+        }
       }
+      const sorted = sortAndDedupeNumbers(collected, spec.leaf);
+      if (sorted.length > 0) value = sorted;
+    } else if (spec.kind === 'stringList') {
+      const collected: string[] = [];
+      for (const candidate of candidatePaths) {
+        const normalized = normalizeSpecLookupPath(candidate);
+        const raws = allValsMap?.get(normalized) ?? (map.has(normalized) ? [map.get(normalized)] : []);
+        for (const r of raws) {
+          collected.push(...extractStringsFromRaw(r, spec.leaf));
+        }
+      }
+      const sorted = sortAndDedupeStrings(collected);
+      if (sorted.length > 0) value = sorted;
+    } else {
+      let bestRaw: unknown;
+      for (const candidate of candidatePaths) {
+        const normalized = normalizeSpecLookupPath(candidate);
+        if (map.has(normalized)) {
+          bestRaw = pickStrongerRawValue(bestRaw, map.get(normalized));
+        }
+      }
+      value = extractLeafValue(bestRaw, spec.kind, spec.leaf);
     }
 
-    if (raw === undefined) {
-      const pathLeaf = spec.path.split('.').pop()!;
-      if (leafLookup.has(spec.leaf)) {
-        raw = leafLookup.get(spec.leaf);
-      } else if (leafLookup.has(pathLeaf)) {
-        raw = leafLookup.get(pathLeaf);
-      }
-    }
-
-    const value = extractLeafValue(raw, spec.kind, spec.leaf);
     if (value !== undefined) {
       seenKeys.add(dedupeKey);
       leaves.push({
@@ -256,11 +446,39 @@ function buildLeavesFromSpecs(pdu: Asn1Record, specs: FeatureSpec[]): FeatureLea
         kind: spec.kind,
         value,
         description: spec.description,
+        path: spec.path,
       });
     }
   }
 
   return leaves;
+}
+
+function appendAutoClassifiedLeaves(
+  pdu: Asn1Record,
+  specs: FeatureSpec[],
+  map: Map<string, unknown>,
+  leaves: FeatureLeaf[],
+  includeUnclassified: boolean
+): RatFeatures {
+  const unclassified = collectUnclassifiedFeatures(pdu, specs, map, leaves);
+  for (const u of unclassified) {
+    const coerced = extractLeafValue(u.value, u.kind, u.leaf);
+    if (coerced === undefined) continue;
+    leaves.push({
+      major: u.major,
+      middle: u.middle,
+      leaf: u.leaf,
+      kind: u.kind,
+      value: coerced,
+      description: u.description,
+      path: u.path,
+      autoDiscovered: true,
+    });
+  }
+  return includeUnclassified && unclassified.length > 0
+    ? { leaves, unclassified }
+    : { leaves };
 }
 
 export function extractROHCProfiles(rohcObj: unknown, middle = 'ROHC Profiles'): FeatureLeaf[] {
@@ -338,7 +556,7 @@ export function decodeAlgorithmCapBits(raw: unknown, prefix: 'uea' | 'uia'): str
   return algos.length > 0 ? algos.sort() : undefined;
 }
 
-export function extractNRFeatures(nrPdu: Asn1Record, includeUnclassified = false): RatFeatures {
+export function extractNRFeatures(nrPdu: Asn1Record, includeUnclassified = true): RatFeatures {
   const map = buildCanonicalFeatureMap(nrPdu);
   const leaves = buildLeavesFromSpecs(nrPdu, NR_FEATURE_SPECS);
 
@@ -347,12 +565,10 @@ export function extractNRFeatures(nrPdu: Asn1Record, includeUnclassified = false
     leaves.push(...extractROHCProfiles(rohc));
   }
 
-  if (!includeUnclassified) return { leaves };
-  const unclassified = collectUnclassifiedFeatures(nrPdu, NR_FEATURE_SPECS, map);
-  return unclassified.length > 0 ? { leaves, unclassified } : { leaves };
+  return appendAutoClassifiedLeaves(nrPdu, NR_FEATURE_SPECS, map, leaves, includeUnclassified);
 }
 
-export function extractEUTRAFeatures(eutraPdu: Asn1Record, includeUnclassified = false): RatFeatures {
+export function extractEUTRAFeatures(eutraPdu: Asn1Record, includeUnclassified = true): RatFeatures {
   const map = buildCanonicalFeatureMap(eutraPdu);
   const leaves = buildLeavesFromSpecs(eutraPdu, EUTRA_FEATURE_SPECS);
 
@@ -397,21 +613,17 @@ export function extractEUTRAFeatures(eutraPdu: Asn1Record, includeUnclassified =
     leaves.push(...extractFgiBits(fgiRel10Tdd, 'FGI-Rel10-TDD', FGI_REL10_TABLE, 100));
   }
 
-  if (!includeUnclassified) return { leaves };
-  const unclassified = collectUnclassifiedFeatures(eutraPdu, EUTRA_FEATURE_SPECS, map);
-  return unclassified.length > 0 ? { leaves, unclassified } : { leaves };
+  return appendAutoClassifiedLeaves(eutraPdu, EUTRA_FEATURE_SPECS, map, leaves, includeUnclassified);
 }
 
-export function extractMRDCFeatures(mrdcPdu: Asn1Record, includeUnclassified = false): RatFeatures {
+export function extractMRDCFeatures(mrdcPdu: Asn1Record, includeUnclassified = true): RatFeatures {
   const map = buildCanonicalFeatureMap(mrdcPdu);
   const leaves = buildLeavesFromSpecs(mrdcPdu, MRDC_FEATURE_SPECS);
 
-  if (!includeUnclassified) return { leaves };
-  const unclassified = collectUnclassifiedFeatures(mrdcPdu, MRDC_FEATURE_SPECS, map);
-  return unclassified.length > 0 ? { leaves, unclassified } : { leaves };
+  return appendAutoClassifiedLeaves(mrdcPdu, MRDC_FEATURE_SPECS, map, leaves, includeUnclassified);
 }
 
-export function extractUTRAFeatures(utraPdu: Asn1Record, includeUnclassified = false): RatFeatures {
+export function extractUTRAFeatures(utraPdu: Asn1Record, includeUnclassified = true): RatFeatures {
   const map = buildCanonicalFeatureMap(utraPdu);
   const leaves = buildLeavesFromSpecs(utraPdu, UTRA_FEATURE_SPECS);
 
@@ -448,7 +660,5 @@ export function extractUTRAFeatures(utraPdu: Asn1Record, includeUnclassified = f
     });
   }
 
-  if (!includeUnclassified) return { leaves };
-  const unclassified = collectUnclassifiedFeatures(utraPdu, UTRA_FEATURE_SPECS, map);
-  return unclassified.length > 0 ? { leaves, unclassified } : { leaves };
+  return appendAutoClassifiedLeaves(utraPdu, UTRA_FEATURE_SPECS, map, leaves, includeUnclassified);
 }

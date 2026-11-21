@@ -682,6 +682,7 @@ export const SingleDeviceView: React.FC<SingleDeviceViewProps> = ({ device, side
                 <SingleDeviceFeaturesView
                   key={`single-features-${activeRatValue}`}
                   leaves={activeRatFeatures.leaves}
+                  ratType={activeRatValue}
                   onOpenUrl={onOpenUrl}
                 />
               )}

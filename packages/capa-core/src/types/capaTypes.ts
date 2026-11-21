@@ -266,6 +266,10 @@ export interface FeatureLeaf {
   value: boolean | number | string | string[] | number[] | undefined;
   description?: string;
   bit?: number;
+  /** Canonical AST path for traceability and GitHub spec auto-registration. */
+  path?: string;
+  /** True when classified dynamically by the auto-classifier rather than a static FeatureSpec. */
+  autoDiscovered?: boolean;
 }
 
 export interface UnknownFeature {
@@ -275,6 +279,7 @@ export interface UnknownFeature {
   path: string;
   kind: FeatureKind;
   value: unknown;
+  description?: string;
   codeSnippet: string;
 }
 

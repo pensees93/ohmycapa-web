@@ -27,7 +27,7 @@ export const MRDC_FEATURE_SPECS: FeatureSpec[] = [
     leaf: 'pdcp-DuplicationSplitDRB',
     path: 'pdcp-ParametersMRDC-v1530.pdcp-DuplicationSplitDRB',
     pathAlternatives: ['generalParametersMRDC.pdcp-DuplicationSplitDRB'],
-    kind: 'enum',
+    kind: 'bool',
     description: 'PDCP duplication for split DRB support (TS 38.306)',
   },
   {
@@ -43,7 +43,7 @@ export const MRDC_FEATURE_SPECS: FeatureSpec[] = [
     middle: 'MRDC-Meas',
     leaf: 'independentGapConfig',
     path: 'measAndMobParametersMRDC.measAndMobParametersMRDC-Common.independentGapConfig',
-    kind: 'enum',
+    kind: 'bool',
     description: 'Independent measurement gap configuration support for MRDC (TS 38.306)',
   },
   {
@@ -59,7 +59,7 @@ export const MRDC_FEATURE_SPECS: FeatureSpec[] = [
     middle: 'MRDC-Meas',
     leaf: 'sftd-MeasNR-Cell',
     path: 'measAndMobParametersMRDC.measAndMobParametersMRDC-XDD-Diff.sftd-MeasNR-Cell',
-    kind: 'enum',
+    kind: 'bool',
     description: 'SFN and Frame Timing Difference (SFTD) measurement between E-UTRA and NR (TS 38.306)',
   },
   {
@@ -67,7 +67,7 @@ export const MRDC_FEATURE_SPECS: FeatureSpec[] = [
     middle: 'MRDC-Meas',
     leaf: 'sftd-MeasPSCell',
     path: 'measAndMobParametersMRDC.measAndMobParametersMRDC-XDD-Diff.sftd-MeasPSCell',
-    kind: 'enum',
+    kind: 'bool',
     description: 'SFTD measurement for the PSCell (TS 38.306)',
   },
   {
@@ -118,7 +118,7 @@ export const MRDC_FEATURE_SPECS: FeatureSpec[] = [
     leaf: 'pdcp-DuplicationSplitSRB',
     path: 'pdcp-ParametersMRDC-v1530.pdcp-DuplicationSplitSRB',
     pathAlternatives: ['generalParametersMRDC.pdcp-DuplicationSplitSRB'],
-    kind: 'enum',
+    kind: 'bool',
     description: 'PDCP duplication for split SRB support (TS 38.306)',
   },
   {

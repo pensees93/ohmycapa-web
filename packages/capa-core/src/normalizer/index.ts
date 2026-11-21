@@ -37,7 +37,7 @@ function extractAsRelease(pdu?: Asn1Record): string | undefined {
  * Normalize a single vendor-neutral `CanonicalAsn1Tree` into `CommonCapaJson` v2.0.
  */
 export function normalizeCapa(ast: CanonicalAsn1Tree, options: NormalizeOptions = {}): CommonCapaJson {
-  const { deviceName = 'Device', includeUnclassified = false } = options;
+  const { deviceName = 'Device', includeUnclassified = true } = options;
 
   const detectedRats: RatType[] = [];
   const rats: CommonCapaJson['rats'] = {};
@@ -125,7 +125,7 @@ export function normalizeCapa(ast: CanonicalAsn1Tree, options: NormalizeOptions 
 export function normalizeMultipleCapa(
   asts: CanonicalAsn1Tree[],
   deviceName: string,
-  includeUnclassified = false
+  includeUnclassified = true
 ): CommonCapaJson {
   const merged = mergeCanonicalAsts(asts);
   return normalizeCapa(merged, { deviceName, includeUnclassified });

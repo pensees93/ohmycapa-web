@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import {
-  Box, Paper, Typography, Chip, IconButton, LinearProgress, Tooltip, Alert, Collapse as MuiCollapse,
+  Box, Paper, Typography, Chip, IconButton, LinearProgress, Tooltip, Alert, Collapse as MuiCollapse, Button,
   useTheme,
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
@@ -10,7 +10,8 @@ import ErrorIcon from '@mui/icons-material/Error';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import type { DeviceState } from '@ohmycapa/capa-core';
+import BugReportIcon from '@mui/icons-material/BugReport';
+import { buildParseErrorIssueReport, type DeviceState } from '@ohmycapa/capa-core';
 
 // ─── Parse error alert ───────────────────────────────────────────────────────
 
@@ -25,9 +26,30 @@ function isUnknownFormatError(error: string): boolean {
   );
 }
 
-function ParseErrorAlert({ fileName, error }: { fileName: string; error: string }) {
+function ParseErrorAlert({
+  fileName,
+  error,
+  onOpenUrl,
+}: {
+  fileName: string;
+  error: string;
+  onOpenUrl?: (url: string) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [reported, setReported] = useState(false);
   const isFormatError = isUnknownFormatError(error);
+
+  const handleReportIssue = () => {
+    const report = buildParseErrorIssueReport(fileName, error);
+    navigator.clipboard?.writeText(report.markdownBody).catch(() => {});
+    setReported(true);
+    setTimeout(() => setReported(false), 2500);
+    if (onOpenUrl) {
+      onOpenUrl(report.issueUrl);
+    } else if (typeof window !== 'undefined') {
+      window.open(report.issueUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
 
   return (
     <Alert
@@ -55,14 +77,36 @@ function ParseErrorAlert({ fileName, error }: { fileName: string; error: string 
             </Typography>
           )}
         </Box>
-        <IconButton
-          size="small"
-          onClick={() => setExpanded(v => !v)}
-          sx={{ flexShrink: 0, p: 0.25, opacity: 0.7 }}
-          title="View details"
-        >
-          {expanded ? <ExpandLessIcon sx={{ fontSize: 14 }} /> : <ExpandMoreIcon sx={{ fontSize: 14 }} />}
-        </IconButton>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+          <Tooltip title="Open pre-filled GitHub Issue to request support for this log format (details copied)" placement="top" arrow>
+            <Button
+              size="small"
+              variant="outlined"
+              color="error"
+              startIcon={<BugReportIcon sx={{ fontSize: 12 }} />}
+              onClick={handleReportIssue}
+              sx={{
+                height: 20,
+                px: 0.75,
+                fontSize: '0.6rem',
+                fontWeight: 600,
+                textTransform: 'none',
+                borderRadius: 1,
+                minWidth: 0,
+              }}
+            >
+              {reported ? 'Opening GitHub…' : 'Report to GitHub'}
+            </Button>
+          </Tooltip>
+          <IconButton
+            size="small"
+            onClick={() => setExpanded(v => !v)}
+            sx={{ flexShrink: 0, p: 0.25, opacity: 0.7 }}
+            title="View details"
+          >
+            {expanded ? <ExpandLessIcon sx={{ fontSize: 14 }} /> : <ExpandMoreIcon sx={{ fontSize: 14 }} />}
+          </IconButton>
+        </Box>
       </Box>
       <MuiCollapse in={expanded}>
         <Box
@@ -135,10 +179,11 @@ interface CapaDropzoneProps {
   onRemoveFile: (name: string) => void;
   onNameChange: (name: string) => void;
   onClear: () => void;
+  onOpenUrl?: (url: string) => void;
 }
 
 export const CapaDropzone: React.FC<CapaDropzoneProps> = ({
-  side, device, onFilesDrop, onRemoveFile, onClear,
+  side, device, onFilesDrop, onRemoveFile, onClear, onOpenUrl,
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
@@ -331,7 +376,7 @@ export const CapaDropzone: React.FC<CapaDropzoneProps> = ({
           </Box>
           {/* Error alerts */}
           {device.files.filter(f => f.error).map(f => (
-            <ParseErrorAlert key={f.file.name} fileName={f.file.name} error={f.error ?? ''} />
+            <ParseErrorAlert key={f.file.name} fileName={f.file.name} error={f.error ?? ''} onOpenUrl={onOpenUrl} />
           ))}
         </Box>
       )}

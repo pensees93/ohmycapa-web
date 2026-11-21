@@ -139,6 +139,8 @@ export interface FeatureDiff {
   stringListDiff?: StringListDiff;
   description?: string;
   bit?: number;
+  path?: string;
+  autoDiscovered?: boolean;
 }
 
 export interface RatFeaturesDiff {

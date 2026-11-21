@@ -530,6 +530,7 @@ const RatDetailView = memo<{
           featuresDiff={featureDiff}
           deviceAName={compareResult.meta.deviceA.fileName}
           deviceBName={compareResult.meta.deviceB.fileName}
+          ratType={ratType}
           onOpenUrl={onOpenUrl}
         />
       )}
@@ -814,6 +815,7 @@ const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyState
           onRemoveFile={name => removeFile('a', name)}
           onNameChange={name => setDeviceName('a', name)}
           onClear={() => handleClearDevice('a')}
+          onOpenUrl={onOpenUrl}
         />
 
         {/* Center Area: Swap or Loading Status */}
@@ -851,6 +853,7 @@ const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyState
           onRemoveFile={name => removeFile('b', name)}
           onNameChange={name => setDeviceName('b', name)}
           onClear={() => handleClearDevice('b')}
+          onOpenUrl={onOpenUrl}
         />
       </Box>
     </Paper>

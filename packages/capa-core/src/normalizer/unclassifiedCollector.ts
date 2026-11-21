@@ -1,10 +1,11 @@
 /**
- * Unclassified Feature Collector for Stage 2 validation.
- * Discovers any canonical leaf path not covered by FeatureSpecs or structural exclusions.
+ * Unclassified Feature Collector & 3GPP Auto-Classifier for Stage 2 validation.
+ * Discovers any canonical leaf path not covered by FeatureSpecs or structural exclusions,
+ * and infers 3GPP Major/Middle/Kind taxonomy for immediate AB comparison and GitHub auto-spec filing.
  */
 
 import type { Asn1Record } from '../types/astTypes';
-import type { FeatureKind, UnknownFeature } from '../types/capaTypes';
+import type { FeatureKind, FeatureLeaf, UnknownFeature } from '../types/capaTypes';
 import { isRecord } from './helpers';
 import type { FeatureSpec } from './specs';
 
@@ -19,6 +20,7 @@ const SKIP_KEYS = new Set([
   'dummy3',
   'dummy4',
   'dummy5',
+  'dummy6',
   'spare',
   'rat-Type',
   'start-CS',
@@ -36,7 +38,7 @@ const SKIP_KEYS = new Set([
 ]);
 
 const SKIP_PREFIXES = [
-  // NR structural/band/combo/featureSet trees
+  // NR structural/band-table/combo/featureSet trees (kept narrow so new Rel-18+ band/MIMO capabilities are discovered)
   'featureSetCombinations',
   'featureSets.featureSetsDownlink',
   'featureSets.featureSetsDownlink-v1540',
@@ -49,8 +51,12 @@ const SKIP_PREFIXES = [
   'featureSets.featureSetsUplinkPerCC',
   'featureSets.featureSetsUplinkPerCC-v1700',
   'featureSets.featureSetsUplinkPerCC-v1780',
-  'rf-Parameters.supportedBandListNR',
-  'rf-Parameters-v16c0.supportedBandListNR-v16c0',
+  'rf-Parameters.supportedBandListNR.bandNR',
+  'rf-Parameters.supportedBandListNR.channelBWs-DL',
+  'rf-Parameters.supportedBandListNR.channelBWs-UL',
+  'rf-Parameters.supportedBandListNR.channelBWs-DL-v1590',
+  'rf-Parameters.supportedBandListNR.channelBWs-UL-v1590',
+  'rf-Parameters.supportedBandListNR.srs-TxSwitch',
   'rf-Parameters.supportedBandCombinationList',
   'rf-Parameters.appliedFreqBandListFilter',
   'pdcp-Parameters.supportedROHC-Profiles',
@@ -95,6 +101,7 @@ const SKIP_PREFIXES = [
 ];
 
 const RE_SKIP_COMBO_LIST = /^rf-Parameters(?:MRDC)?\.supportedBandCombinationList(?:-v\d+)?(?:\.|$)/;
+const RE_TRANSPARENT = /^(?:nonCriticalExtension|lateNonCriticalExtension|present|CONTAINING|UE-EUTRA-Capability-v.*-IEs)$/;
 
 function isLeafScalarOrPrimitiveArray(val: unknown): boolean {
   if (val === null || val === undefined) return false;
@@ -107,7 +114,15 @@ function isLeafScalarOrPrimitiveArray(val: unknown): boolean {
 }
 
 function inferKind(value: unknown): FeatureKind {
-  if (typeof value === 'boolean' || value === 'supported' || value === 'notSupported') return 'bool';
+  if (
+    typeof value === 'boolean' ||
+    value === 'supported' ||
+    value === 'notSupported' ||
+    value === 'true' ||
+    value === 'false'
+  ) {
+    return 'bool';
+  }
   if (typeof value === 'number') return 'number';
   if (typeof value === 'string') return 'enum';
   if (Array.isArray(value)) {
@@ -130,34 +145,150 @@ function shouldSkipPath(path: string): boolean {
   return false;
 }
 
+function inferMajorFromPath(path: string): string {
+  const lower = path.toLowerCase();
+  if (
+    lower.includes('mimo-parametersperband') ||
+    lower.includes('phy-parameters') ||
+    lower.includes('phylayerparameters') ||
+    lower.includes('highspeed') ||
+    lower.includes('laa-parameters') ||
+    lower.includes('ce-parameters') ||
+    lower.includes('physicalchannelcapability') ||
+    lower.includes('transportchannelcapability')
+  ) {
+    return 'PHY';
+  }
+  if (lower.includes('mac-parameters')) return 'MAC';
+  if (lower.includes('rlc-parameters') || lower.includes('rlc-capability')) return 'RLC';
+  if (lower.includes('pdcp-parameters') || lower.includes('pdcp-capability')) return 'PDCP';
+  if (lower.includes('sdap-parameters')) return 'SDAP';
+  if (lower.includes('interrat-parameters') || lower.includes('irat-parameters')) return 'InterRAT';
+  if (
+    lower.includes('measandmobparameters') ||
+    lower.includes('measparameters') ||
+    lower.includes('neighcellsi-') ||
+    lower.includes('csg-proximity') ||
+    lower.includes('son-parameters') ||
+    lower.includes('ue-basednetwperfmeas') ||
+    lower.includes('ue-basedperfmeas') ||
+    lower.includes('measurementcapability')
+  ) {
+    return 'Meas/Mob';
+  }
+  if (lower.includes('ims-parameters') || lower.includes('mmtel-parameters')) return 'IMS';
+  if (lower.includes('nrdc-parameters') || lower.includes('generalparametersmrdc')) return 'MRDC';
+  if (lower.startsWith('rf-parameters') || lower.includes('.rf-parameters')) return 'RF';
+  return 'General';
+}
+
+function extractAddPrefix(segments: string[]): string | undefined {
+  for (const seg of segments) {
+    if (seg.startsWith('fr1-fr2-Add-')) return 'FR1-FR2-Add';
+    if (seg.startsWith('fr1-Add-')) return 'FR1-Add';
+    if (seg.startsWith('fr2-Add-')) return 'FR2-Add';
+    if (seg.startsWith('fdd-Add-')) return 'FDD-Add';
+    if (seg.startsWith('tdd-Add-')) return 'TDD-Add';
+  }
+  return undefined;
+}
+
+function formatMiddleSegment(seg: string): string {
+  if (/frx-diff/i.test(seg)) return 'FRX-Diff';
+  if (/xdd-diff/i.test(seg)) return 'XDD-Diff';
+  if (/common/i.test(seg)) return 'Common';
+  if (/parametersfr1/i.test(seg)) return 'FR1';
+  if (/parametersfr2/i.test(seg)) return 'FR2';
+  if (/supportedbandlistnr/i.test(seg)) return 'Band';
+  if (/mimo-parametersperband/i.test(seg)) return 'MIMO-PerBand';
+
+  const relMatch = seg.match(/-(r\d+|v\d+)$/i);
+  const relSuffix = relMatch ? ` (${relMatch[1].toUpperCase()})` : '';
+  const cleaned = seg
+    .replace(/-(r\d+|v\d+)$/i, '')
+    .replace(/-Parameters$/i, '')
+    .replace(/^./, (c) => c.toUpperCase());
+  return `${cleaned || 'Other'}${relSuffix}`;
+}
+
+/**
+ * Automatically classify an unknown 3GPP capability path into `{ major, middle, leaf, kind, description }`.
+ */
+export function classifyUnknownFeaturePath(
+  effectivePath: string,
+  normalizedVal: unknown,
+  takenKeys?: Set<string>
+): { major: string; middle: string; leaf: string; kind: FeatureKind; description: string } {
+  const segments = effectivePath.split('.').filter(Boolean);
+  const baseLeaf = segments[segments.length - 1] ?? effectivePath;
+  const major = inferMajorFromPath(effectivePath);
+  const addPrefix = extractAddPrefix(segments);
+
+  let subMiddle = 'Auto';
+  if (segments.length >= 2) {
+    const parent = segments[segments.length - 2];
+    const grand = segments.length >= 3 ? segments[segments.length - 3] : undefined;
+    const chosen = /^(?:scs-\d+kHz|fr[12](?:-r\d+)?)$/i.test(parent) && grand ? grand : parent;
+    subMiddle = formatMiddleSegment(chosen);
+  } else {
+    const relMatch = baseLeaf.match(/-(r\d+|v\d+)$/i);
+    subMiddle = relMatch ? `Rel-${relMatch[1].slice(1)}` : 'General';
+  }
+
+  let middle = addPrefix && !subMiddle.includes(addPrefix)
+    ? `${addPrefix} (${subMiddle})`
+    : subMiddle;
+  let leaf = baseLeaf;
+
+  if (takenKeys) {
+    const candidateKey = `${major}|${middle}|${leaf}`;
+    if (takenKeys.has(candidateKey)) {
+      const disambiguator = segments.length >= 2 ? segments[segments.length - 2] : 'ext';
+      leaf = `${baseLeaf} (${disambiguator})`;
+      let suffix = 2;
+      while (takenKeys.has(`${major}|${middle}|${leaf}`)) {
+        leaf = `${baseLeaf} (${disambiguator}-${suffix++})`;
+      }
+    }
+    takenKeys.add(`${major}|${middle}|${leaf}`);
+  }
+
+  const kind = inferKind(normalizedVal);
+  const description = `Auto-discovered 3GPP capability (${effectivePath})`;
+
+  return { major, middle, leaf, kind, description };
+}
+
 /**
  * Collect canonical feature paths not matched by `specs` or structural exclusions.
  */
 export function collectUnclassifiedFeatures(
   pdu: Asn1Record,
   specs: FeatureSpec[],
-  featureMap: Map<string, unknown>
+  featureMap: Map<string, unknown>,
+  existingLeaves: FeatureLeaf[] = []
 ): UnknownFeature[] {
   void pdu;
   const knownPaths = new Set<string>();
-  const knownLeaves = new Set<string>();
+  const takenKeys = new Set<string>();
 
   for (const spec of specs) {
-    knownLeaves.add(spec.leaf);
-    const cleanPrimary = spec.path.split('.').filter((s) => s !== 'present').join('.');
+    takenKeys.add(`${spec.major}|${spec.middle}|${spec.leaf}`);
+    const cleanPrimary = spec.path.split('.').filter((s) => s.length > 0 && !RE_TRANSPARENT.test(s)).join('.');
     knownPaths.add(cleanPrimary);
-    knownLeaves.add(cleanPrimary.split('.').pop()!);
     for (const alt of spec.pathAlternatives ?? []) {
-      const cleanAlt = alt.split('.').filter((s) => s !== 'present').join('.');
+      const cleanAlt = alt.split('.').filter((s) => s.length > 0 && !RE_TRANSPARENT.test(s)).join('.');
       knownPaths.add(cleanAlt);
-      knownLeaves.add(cleanAlt.split('.').pop()!);
     }
+  }
+
+  for (const l of existingLeaves) {
+    takenKeys.add(`${l.major}|${l.middle}|${l.leaf}`);
   }
 
   const unclassified: UnknownFeature[] = [];
   for (const [path, value] of featureMap.entries()) {
-    // Handle inline single-key CHOICE objects like `{ supported: 'b6400' }` via parent key OR '.supported'
-    const normalizedVal = isRecord(value) && typeof value['supported'] === 'string'
+    const normalizedVal = isRecord(value) && typeof value['supported'] === 'string' && Object.keys(value).length === 1
       ? value['supported']
       : value;
     if (!isLeafScalarOrPrimitiveArray(normalizedVal)) continue;
@@ -165,20 +296,25 @@ export function collectUnclassifiedFeatures(
 
     // Ignore `.supported` child when parent inline CHOICE path is already covered
     const effectivePath = path.endsWith('.supported') ? path.slice(0, -'.supported'.length) : path;
-    const leaf = effectivePath.split('.').pop()!;
-    if (knownPaths.has(path) || knownPaths.has(effectivePath) || knownLeaves.has(leaf)) {
+    if (knownPaths.has(path) || knownPaths.has(effectivePath)) {
       continue;
     }
 
-    const kind = inferKind(normalizedVal);
+    const { major, middle, leaf, kind, description } = classifyUnknownFeaturePath(
+      effectivePath,
+      normalizedVal,
+      takenKeys
+    );
+
     unclassified.push({
-      major: 'Unclassified',
-      middle: effectivePath.split('.')[0] || 'Other',
+      major,
+      middle,
       leaf,
       path: effectivePath,
       kind,
       value: normalizedVal,
-      codeSnippet: `{ major: 'Unclassified', middle: '${effectivePath.split('.')[0] || 'Other'}', leaf: '${leaf}', path: '${effectivePath}', kind: '${kind}' }`,
+      description,
+      codeSnippet: JSON.stringify({ major, middle, leaf, path: effectivePath, kind, description }, null, 2),
     });
   }
 

@@ -26,7 +26,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "MBMS",
     "leaf": "mbms-SCell-r11",
     "path": "mbms-Parameters-r11.mbms-SCell-r11",
-    "kind": "enum",
+    "kind": "bool",
     "description": "MBMS on SCell support (TS 36.331, Rel-11)"
   },
   {
@@ -34,7 +34,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Positioning",
     "leaf": "otdoa-UE-Assisted-r10",
     "path": "otdoa-PositioningCapabilities-r10.otdoa-UE-Assisted-r10",
-    "kind": "enum",
+    "kind": "bool",
     "description": "OTDOA UE assisted positioning (TS 36.305, Rel-10)"
   },
   {
@@ -130,7 +130,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "RRC Segmentation",
     "leaf": "ul-RRC-Segmentation-r16",
     "path": "other-Parameters-v1690.ul-RRC-Segmentation-r16",
-    "kind": "enum",
+    "kind": "bool",
     "description": "UL RRC segmentation support (TS 36.331, Rel-16)"
   },
   {
@@ -138,7 +138,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "RRC Segmentation",
     "leaf": "ul-RRC-MaxCapaSegments-r17",
     "path": "ul-RRC-MaxCapaSegments-r17",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Support for maximum number of capability segments for UL RRC capability transfer (TS 36.331, Rel-17)"
   },
   {
@@ -170,6 +170,9 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "NR (Rel-15)",
     "leaf": "bandNR-r15",
     "path": "irat-ParametersNR-r15.supportedBandListEN-DC-r15",
+    "pathAlternatives": [
+      "irat-ParametersNR-r15.supportedBandListEN-DC-r15.bandNR-r15"
+    ],
     "kind": "numberList",
     "description": "Supported NR band for EN-DC (TS 36.331, Rel-15)"
   },
@@ -178,6 +181,9 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "NR (Rel-15)",
     "leaf": "bandNR-sa-r15",
     "path": "irat-ParametersNR-v1540.supportedBandListNR-SA-r15",
+    "pathAlternatives": [
+      "irat-ParametersNR-v1540.supportedBandListNR-SA-r15.bandNR-r15"
+    ],
     "kind": "numberList",
     "description": "Supported NR band for SA (TS 36.331, Rel-15)"
   },
@@ -210,7 +216,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "NR (Rel-15)",
     "leaf": "ims-VoiceOverNR-FR1-r15",
     "path": "irat-ParametersNR-v1540.ims-VoiceOverNR-FR1-r15",
-    "kind": "enum",
+    "kind": "bool",
     "description": "IMS voice over NR FR1 support (TS 36.306, Rel-15)"
   },
   {
@@ -226,7 +232,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "NR (Rel-15)",
     "leaf": "eventB2-r15",
     "path": "irat-ParametersNR-r15.eventB2-r15",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Event B2 measurement reporting for NR (TS 36.331, Rel-15)"
   },
   {
@@ -234,16 +240,8 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "NR (Rel-16)",
     "leaf": "extendedBand-n77-r16",
     "path": "irat-ParametersNR-v1660.extendedBand-n77-r16",
-    "kind": "enum",
-    "description": "Extended band n77 support for wider frequency range (TS 36.101, Rel-16)"
-  },
-  {
-    "major": "InterRAT",
-    "middle": "Rel15+",
-    "leaf": "utra-GERAN-CGI-Reporting-ENDC-r15",
-    "path": "neighCellSI-AcquisitionParameters-v1550.utra-GERAN-CGI-Reporting-ENDC-r15",
     "kind": "bool",
-    "description": "CGI reporting for UTRA/GERAN cells in EN-DC (TS 36.331, Rel-15)"
+    "description": "Extended band n77 support for wider frequency range (TS 36.101, Rel-16)"
   },
   {
     "major": "InterRAT",
@@ -274,7 +272,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel15+",
     "leaf": "eLCID-Support-r15",
     "path": "mac-Parameters-v1550.eLCID-Support-r15",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Extended Logical Channel ID support (TS 36.321, Rel-15)"
   },
   {
@@ -282,7 +280,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "General",
     "leaf": "extendedNumberOfDRBs-r15",
     "path": "extendedNumberOfDRBs-r15",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Support for up to 15 Data Radio Bearers (TS 36.331, Rel-15)"
   },
   {
@@ -346,7 +344,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel14+",
     "leaf": "shortSPS-IntervalTDD-r14",
     "path": "mac-Parameters-v1430.shortSPS-IntervalTDD-r14",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Short SPS interval for TDD support (TS 36.321 §5.10, Rel-14)"
   },
   {
@@ -354,7 +352,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel13+",
     "leaf": "allowedCellList-r13",
     "path": "measParameters-v1310.allowedCellList-r13",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Allowed cell list for measurement (TS 36.331 §5.5.2, Rel-13)"
   },
   {
@@ -378,7 +376,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "CSG Proximity",
     "leaf": "utran-ProximityIndication-r9",
     "path": "csg-ProximityIndicationParameters-r9.utran-ProximityIndication-r9",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Proximity indication for UTRAN CSG cells (TS 36.331, Rel-9)"
   },
   {
@@ -386,7 +384,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel10+",
     "leaf": "loggedMeasurementsIdle-r10",
     "path": "ue-BasedNetwPerfMeasParameters-r10.loggedMeasurementsIdle-r10",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Logged measurements in idle mode (TS 36.331, Rel-10)"
   },
   {
@@ -410,7 +408,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Neigh Cell SI",
     "leaf": "utran-SI-AcquisitionForHO-r9",
     "path": "neighCellSI-AcquisitionParameters-r9.utran-SI-AcquisitionForHO-r9",
-    "kind": "enum",
+    "kind": "bool",
     "description": "UTRAN SI acquisition for HO (TS 36.331, Rel-9)"
   },
   {
@@ -529,6 +527,17 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "description": "EUTRA CGI reporting for EN-DC (TS 36.331, Rel-15)"
   },
   {
+    "major": "InterRAT",
+    "middle": "Rel15+",
+    "leaf": "utra-GERAN-CGI-Reporting-ENDC-r15",
+    "path": "neighCellSI-AcquisitionParameters-v1550.utra-GERAN-CGI-Reporting-ENDC-r15",
+    "pathAlternatives": [
+      "utra-GERAN-CGI-Reporting-ENDC-r15"
+    ],
+    "kind": "bool",
+    "description": "CGI reporting for UTRA/GERAN cells in EN-DC (TS 36.331, Rel-15)"
+  },
+  {
     "major": "Meas/Mob",
     "middle": "Rel15+",
     "leaf": "measGapPatterns-r15",
@@ -557,7 +566,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel16+",
     "leaf": "eutra-SI-AcquisitionForHO-ENDC-r16",
     "path": "neighCellSI-AcquisitionParameters-v1610.eutra-SI-AcquisitionForHO-ENDC-r16",
-    "kind": "enum",
+    "kind": "bool",
     "description": "EUTRA System Information acquisition for handover in EN-DC (TS 36.331, Rel-16)"
   },
   {
@@ -573,7 +582,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel10+",
     "leaf": "standaloneGNSS-Location-r10",
     "path": "ue-BasedNetwPerfMeasParameters-r10.standaloneGNSS-Location-r10",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Standalone GNSS location capability (TS 36.305, Rel-10)"
   },
   {
@@ -613,7 +622,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel15 (NR)",
     "leaf": "rohc-ContextContinue-r15",
     "path": "pdcp-ParametersNR-r15.rohc-ContextContinue-r15",
-    "kind": "enum",
+    "kind": "bool",
     "description": "ROHC context continuation for NR PDCP (Rel-15, TS 38.323)"
   },
   {
@@ -637,7 +646,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel16+",
     "leaf": "pdcp-VersionChangeWithoutHO-r16",
     "path": "pdcp-Parameters-v1610.pdcp-VersionChangeWithoutHO-r16",
-    "kind": "enum",
+    "kind": "bool",
     "description": "PDCP version change without handover (TS 36.323, Rel-16)"
   },
   {
@@ -733,7 +742,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Common",
     "leaf": "enhancedDualLayerTDD-r9",
     "path": "phyLayerParameters-v920.enhancedDualLayerTDD-r9",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Enhanced dual-layer TDD (TS 36.213, Rel-9)"
   },
   {
@@ -781,7 +790,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Common",
     "leaf": "pucch-Format4-r13",
     "path": "phyLayerParameters-v1310.pucch-Format4-r13",
-    "kind": "enum",
+    "kind": "bool",
     "description": "PUCCH format 4 support (TS 36.211, Rel-13)"
   },
   {
@@ -789,7 +798,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Common",
     "leaf": "pucch-Format5-r13",
     "path": "phyLayerParameters-v1310.pucch-Format5-r13",
-    "kind": "enum",
+    "kind": "bool",
     "description": "PUCCH format 5 support (TS 36.211, Rel-13)"
   },
   {
@@ -837,6 +846,14 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
   },
   {
     "major": "PHY",
+    "middle": "FDD-Add",
+    "leaf": "tm9-With-8Tx-FDD-v1060",
+    "path": "fdd-Add-UE-EUTRA-Capabilities-v1060.phyLayerParameters-v1060.tm9-With-8Tx-FDD-r10",
+    "kind": "bool",
+    "description": "TM9 with 8 TX antenna ports FDD in FDD-Add-v1060 (TS 36.213, Rel-10)"
+  },
+  {
+    "major": "PHY",
     "middle": "Common",
     "leaf": "ue-SpecificRefSigsSupported",
     "path": "phyLayerParameters.ue-SpecificRefSigsSupported",
@@ -856,7 +873,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "LAA (Rel-13)",
     "leaf": "downlinkLAA-r13",
     "path": "laa-Parameters-r13.downlinkLAA-r13",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Downlink Licensed Assisted Access support (TS 36.300, Rel-13)"
   },
   {
@@ -864,7 +881,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel13+",
     "leaf": "srs-EnhancementsTDD-r13",
     "path": "phyLayerParameters-v1320.mimo-UE-Parameters-r13.srs-EnhancementsTDD-r13",
-    "kind": "enum",
+    "kind": "bool",
     "description": "SRS enhancements for TDD (TS 36.213 §8.2, Rel-13)"
   },
   {
@@ -896,7 +913,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel11+",
     "leaf": "tdd-SpecialSubframe-r11",
     "path": "phyLayerParameters-v1130.tdd-SpecialSubframe-r11",
-    "kind": "enum",
+    "kind": "bool",
     "description": "TDD special subframe configuration (TS 36.211 §6.2.3, Rel-11)"
   },
   {
@@ -904,7 +921,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Common",
     "leaf": "tm5-TDD-r9",
     "path": "phyLayerParameters-v9d0.tm5-TDD-r9",
-    "kind": "enum",
+    "kind": "bool",
     "description": "TM5 (MU-MIMO) for TDD support (TS 36.211 §6.3, Rel-9)"
   },
   {
@@ -912,7 +929,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel10+",
     "leaf": "multiNS-Pmax-r10",
     "path": "rf-Parameters-v10j0.multiNS-Pmax-r10",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Multi-NS Pmax (TS 36.101, Rel-10)"
   },
   {
@@ -920,7 +937,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel11+",
     "leaf": "freqBandRetrieval-r11",
     "path": "rf-Parameters-v1180.freqBandRetrieval-r11",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Frequency band retrieval (TS 36.101, Rel-11)"
   },
   {
@@ -928,7 +945,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel12+",
     "leaf": "freqBandPriorityAdjustment-r12",
     "path": "rf-Parameters-v1250.freqBandPriorityAdjustment-r12",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Frequency band priority adjustment (TS 36.101, Rel-12)"
   },
   {
@@ -936,7 +953,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel12+",
     "leaf": "maxLayersMIMO-Indication-r12",
     "path": "rf-Parameters-v12b0.maxLayersMIMO-Indication-r12",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Max layers MIMO indication (TS 36.306, Rel-12)"
   },
   {
@@ -944,7 +961,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel13+",
     "leaf": "maximumCCsRetrieval-r13",
     "path": "rf-Parameters-v1310.maximumCCsRetrieval-r13",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Maximum CCs retrieval (TS 36.306, Rel-13)"
   },
   {
@@ -952,7 +969,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel13+",
     "leaf": "reducedIntNonContComb-r13",
     "path": "rf-Parameters-v1310.reducedIntNonContComb-r13",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Reduced inter non-contiguous combination (TS 36.101, Rel-13)"
   },
   {
@@ -960,7 +977,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel13+",
     "leaf": "skipFallbackCombinations-r13",
     "path": "rf-Parameters-v1310.skipFallbackCombinations-r13",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Skip fallback combinations (TS 36.101, Rel-13)"
   },
   {
@@ -992,7 +1009,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel14+",
     "leaf": "diffFallbackCombReport-r14",
     "path": "rf-Parameters-v1430.diffFallbackCombReport-r14",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Different fallback combination report (TS 36.101, Rel-14)"
   },
   {
@@ -1000,7 +1017,7 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Rel14+",
     "leaf": "extendedPollByte-r14",
     "path": "rlc-Parameters-v1430.extendedPollByte-r14",
-    "kind": "enum",
+    "kind": "bool",
     "description": "Extended poll byte in RLC support (TS 36.322, Rel-14)"
   },
   {

@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import {
+  buildUnclassifiedSpecIssueReport,
+  compareCapaFormats,
+  parseAutoSpecBlockFromIssueBody,
+  type CommonCapaJson,
+} from '../src';
 import { extractEutraRat } from '../src/normalizer/eutraNormalizer';
+import {
+  extractEUTRAFeatures,
+  extractNRFeatures,
+  extractUTRAFeatures,
+} from '../src/normalizer/featureNormalizer';
 import {
   extractEutraFeatureSets,
   extractNRFeatureSets,
@@ -261,6 +272,67 @@ describe('Stage 2 Normalizer Unit Tests', () => {
         { band: 5, displayName: 'bandV' },
         { band: 8, displayName: 'bandVIII', powerClass: 'pc3' },
       ]);
+    });
+
+    it('aggregates multi-band arrays to max capability & auto-classifies unseen Rel-18 features with GitHub round-trip', () => {
+      const nrA = extractNRFeatures({
+        'rf-Parameters': {
+          supportedBandListNR: [
+            { bandNR: 1, 'ue-PowerClass': 'pc3', 'maxUplinkDutyCycle-PC2-FR1': 'n50' },
+            { bandNR: 78, 'ue-PowerClass': 'pc2', 'ue-PowerClass-v1610': 'pc1dot5', 'maxUplinkDutyCycle-PC2-FR1': 'n80' },
+          ],
+        },
+        'mac-Parameters': {
+          'mac-Parameters-v1810': {
+            'rel18-TestMacFlag': 'supported',
+          },
+        },
+      });
+      expect(nrA.leaves.find((l) => l.leaf === 'ue-PowerClass')?.value).toBe('pc1dot5');
+      expect(nrA.leaves.find((l) => l.leaf === 'maxUplinkDutyCycle-PC2-FR1')?.value).toBe('n80');
+      expect(nrA.leaves.find((l) => l.leaf === 'rel18-TestMacFlag')).toMatchObject({
+        major: 'MAC',
+        kind: 'bool',
+        value: true,
+        autoDiscovered: true,
+      });
+
+      const eutraA = extractEUTRAFeatures({});
+      const devA: CommonCapaJson = {
+        schemaVersion: '2.0',
+        meta: { deviceName: 'A', fileName: 'A.txt', vendor: 'SLSI', detectedRats: ['nr', 'eutra'] },
+        rats: { nr: { bands: [], bandCombinations: [] } },
+        features: { nr: nrA, eutra: eutraA },
+        diagnostics: { warnings: [], errors: [] },
+      };
+      const devB: CommonCapaJson = {
+        schemaVersion: '2.0',
+        meta: { deviceName: 'B', fileName: 'B.txt', vendor: 'QUALCOMM', detectedRats: ['nr'] },
+        rats: { nr: { bands: [], bandCombinations: [] } },
+        features: { nr: extractNRFeatures({}) },
+        diagnostics: { warnings: [], errors: [] },
+      };
+
+      const diff = compareCapaFormats(devA, devB);
+      expect(diff.featuresDiff?.nr?.diffs.find((d) => d.leaf === 'rel18-TestMacFlag')).toMatchObject({
+        status: 'a-only',
+        autoDiscovered: true,
+      });
+
+      const report = buildUnclassifiedSpecIssueReport([devA, devB]);
+      expect(parseAutoSpecBlockFromIssueBody(report.markdownBody)).toMatchObject([
+        { rat: 'nr', major: 'MAC', leaf: 'rel18-TestMacFlag', kind: 'bool' },
+      ]);
+
+      const utra = extractUTRAFeatures({
+        interRATHandoverInfo: {},
+        'ue-RadioAccessCapability-v860ext': {
+          'ue-RadioAccessCapabBandFDDList3': [
+            { measurementCapability3: { compressedModeMeasCapabEUTRAList: [{ radioFrequencyBandEUTRA: 41 }, { radioFrequencyBandEUTRA: 64 }, { radioFrequencyBandEUTRA: 3 }] } },
+          ],
+        },
+      });
+      expect(utra).toBeDefined();
     });
   });
 });

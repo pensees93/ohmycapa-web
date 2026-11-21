@@ -120,6 +120,18 @@ export {
   validateFileExtension,
   type ValidationResult,
 } from './compare/capaValidate';
+export {
+  AUTO_SPEC_END_MARKER,
+  AUTO_SPEC_START_MARKER,
+  DEFAULT_GITHUB_REPO_URL,
+  buildParseErrorIssueReport,
+  buildUnclassifiedSpecIssueReport,
+  collectAutoSpecEntries,
+  parseAutoSpecBlockFromIssueBody,
+  type AutoSpecIssueEntry,
+  type ParseErrorIssueReport,
+  type UnclassifiedSpecIssueReport,
+} from './compare/githubIssueReport';
 
 // Excel styling utilities (shared with @ohmycapa/mtk-core)
 export {

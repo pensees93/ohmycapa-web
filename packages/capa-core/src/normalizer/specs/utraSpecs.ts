@@ -182,6 +182,11 @@ export const UTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "CompressedMode-EUTRA",
     "leaf": "radioFrequencyBandEUTRA",
     "path": "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.v3g0NonCriticalExtensions.v4b0NonCriticalExtensions.v4d0NonCriticalExtensions.v590NonCriticalExtensions.v690NonCriticalExtensions.v6b0NonCriticalExtensions.v6e0NonCriticalExtensions.v770NonCriticalExtensions.v790nonCriticalExtensions.v860NonCriticalExtensions.interRATHandoverInfo-v860ext.ue-RadioAccessCapabilityInfo.ue-RadioAccessCapabBandFDDList3.measurementCapability3.compressedModeMeasCapabEUTRAList",
+    "pathAlternatives": [
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.v3g0NonCriticalExtensions.v4b0NonCriticalExtensions.v4d0NonCriticalExtensions.v590NonCriticalExtensions.v690NonCriticalExtensions.v6b0NonCriticalExtensions.v6e0NonCriticalExtensions.v770NonCriticalExtensions.v790nonCriticalExtensions.v860NonCriticalExtensions.interRATHandoverInfo-v860ext.ue-RadioAccessCapabilityInfo.ue-RadioAccessCapabBandFDDList3.measurementCapability3.compressedModeMeasCapabEUTRAList.radioFrequencyBandEUTRA",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.v3g0NonCriticalExtensions.v4b0NonCriticalExtensions.v4d0NonCriticalExtensions.v590NonCriticalExtensions.v690NonCriticalExtensions.v6b0NonCriticalExtensions.v6e0NonCriticalExtensions.v770NonCriticalExtensions.v790nonCriticalExtensions.v860NonCriticalExtensions.v880NonCriticalExtensions.v920NonCriticalExtensions.v8b0NonCriticalExtensions.v950NonCriticalExtensions.va40NonCriticalExtensions.va80NonCriticalExtensions.vb50NonCriticalExtensions.interRATHandoverInfo-vb50ext.ue-RadioAccessCapabilityInfo-vb50ext.ue-RadioAccessCapabBandFDDList6.measurementCapability5.compressedModeMeasCapabEUTRAList",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.v3g0NonCriticalExtensions.v4b0NonCriticalExtensions.v4d0NonCriticalExtensions.v590NonCriticalExtensions.v690NonCriticalExtensions.v6b0NonCriticalExtensions.v6e0NonCriticalExtensions.v770NonCriticalExtensions.v790nonCriticalExtensions.v860NonCriticalExtensions.v880NonCriticalExtensions.v920NonCriticalExtensions.v8b0NonCriticalExtensions.v950NonCriticalExtensions.va40NonCriticalExtensions.va80NonCriticalExtensions.vb50NonCriticalExtensions.interRATHandoverInfo-vb50ext.ue-RadioAccessCapabilityInfo-vb50ext.ue-RadioAccessCapabBandFDDList6.measurementCapability5.compressedModeMeasCapabEUTRAList.radioFrequencyBandEUTRA"
+    ],
     "kind": "numberList",
     "description": "Radio frequency band EUTRA extension (TS 25.101)"
   },
@@ -203,7 +208,9 @@ export const UTRA_FEATURE_SPECS: FeatureSpec[] = [
     "leaf": "radioFrequencyBandFDD",
     "path": "ue-CapabilityContainer.ue-RadioAccessCapability-v370ext.ue-RadioAccessCapabBandFDDList.measurementCapability.compressedModeMeasCapabFDDList",
     "pathAlternatives": [
+      "ue-CapabilityContainer.ue-RadioAccessCapability-v370ext.ue-RadioAccessCapabBandFDDList.measurementCapability.compressedModeMeasCapabFDDList.radioFrequencyBandFDD",
       "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList2.measurementCapability2.compressedModeMeasCapabFDDList",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList2.measurementCapability2.compressedModeMeasCapabFDDList.radioFrequencyBandFDD",
       "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList-ext.compressedModeMeasCapabFDDList-ext"
     ],
     "kind": "stringList",
@@ -215,7 +222,9 @@ export const UTRA_FEATURE_SPECS: FeatureSpec[] = [
     "leaf": "radioFrequencyBandFDD2",
     "path": "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList-ext.compressedModeMeasCapabFDDList-ext",
     "pathAlternatives": [
-      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList2.measurementCapability2.compressedModeMeasCapabFDDList2"
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList-ext.compressedModeMeasCapabFDDList-ext.radioFrequencyBandFDD2",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList2.measurementCapability2.compressedModeMeasCapabFDDList2",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList2.measurementCapability2.compressedModeMeasCapabFDDList.radioFrequencyBandFDD2"
     ],
     "kind": "stringList",
     "description": "Radio frequency band FDD2 for measurements (TS 25.306)"
@@ -249,7 +258,9 @@ export const UTRA_FEATURE_SPECS: FeatureSpec[] = [
     "leaf": "radioFrequencyBandGSM",
     "path": "ue-CapabilityContainer.ue-RadioAccessCapability-v370ext.ue-RadioAccessCapabBandFDDList.measurementCapability.compressedModeMeasCapabGSMList",
     "pathAlternatives": [
-      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList2.measurementCapability2.compressedModeMeasCapabGSMList"
+      "ue-CapabilityContainer.ue-RadioAccessCapability-v370ext.ue-RadioAccessCapabBandFDDList.measurementCapability.compressedModeMeasCapabGSMList.radioFrequencyBandGSM",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList2.measurementCapability2.compressedModeMeasCapabGSMList",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList2.measurementCapability2.compressedModeMeasCapabGSMList.radioFrequencyBandGSM"
     ],
     "kind": "stringList",
     "description": "Radio frequency band for GSM measurements (TS 25.306)"
@@ -283,7 +294,11 @@ export const UTRA_FEATURE_SPECS: FeatureSpec[] = [
     "path": "ue-CapabilityContainer.ue-RadioAccessCapability-v370ext.ue-RadioAccessCapabBandFDDList",
     "pathAlternatives": [
       "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList2",
-      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.v3g0NonCriticalExtensions.v4b0NonCriticalExtensions.v4d0NonCriticalExtensions.v590NonCriticalExtensions.v690NonCriticalExtensions.v6b0NonCriticalExtensions.v6e0NonCriticalExtensions.v770NonCriticalExtensions.v790nonCriticalExtensions.v860NonCriticalExtensions.interRATHandoverInfo-v860ext.ue-RadioAccessCapabilityInfo.ue-RadioAccessCapabBandFDDList3"
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList-ext.radioFrequencyBandFDD",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.v3g0NonCriticalExtensions.v4b0NonCriticalExtensions.v4d0NonCriticalExtensions.v590NonCriticalExtensions.v690NonCriticalExtensions.v6b0NonCriticalExtensions.v6e0NonCriticalExtensions.v770NonCriticalExtensions.v790nonCriticalExtensions.v860NonCriticalExtensions.interRATHandoverInfo-v860ext.ue-RadioAccessCapabilityInfo.ue-RadioAccessCapabBandFDDList3",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.v3g0NonCriticalExtensions.v4b0NonCriticalExtensions.v4d0NonCriticalExtensions.v590NonCriticalExtensions.v690NonCriticalExtensions.v6b0NonCriticalExtensions.v6e0NonCriticalExtensions.v770NonCriticalExtensions.v790nonCriticalExtensions.v860NonCriticalExtensions.interRATHandoverInfo-v860ext.ue-RadioAccessCapabilityInfo.ue-RadioAccessCapabBandFDDList3.radioFrequencyBandFDD",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.v3g0NonCriticalExtensions.v4b0NonCriticalExtensions.v4d0NonCriticalExtensions.v590NonCriticalExtensions.v690NonCriticalExtensions.v6b0NonCriticalExtensions.v6e0NonCriticalExtensions.v770NonCriticalExtensions.v790nonCriticalExtensions.v860NonCriticalExtensions.v880NonCriticalExtensions.v920NonCriticalExtensions.v8b0NonCriticalExtensions.v950NonCriticalExtensions.va40NonCriticalExtensions.va80NonCriticalExtensions.vb50NonCriticalExtensions.interRATHandoverInfo-vb50ext.ue-RadioAccessCapabilityInfo-vb50ext.ue-RadioAccessCapabBandFDDList6",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.v3g0NonCriticalExtensions.v4b0NonCriticalExtensions.v4d0NonCriticalExtensions.v590NonCriticalExtensions.v690NonCriticalExtensions.v6b0NonCriticalExtensions.v6e0NonCriticalExtensions.v770NonCriticalExtensions.v790nonCriticalExtensions.v860NonCriticalExtensions.v880NonCriticalExtensions.v920NonCriticalExtensions.v8b0NonCriticalExtensions.v950NonCriticalExtensions.va40NonCriticalExtensions.va80NonCriticalExtensions.vb50NonCriticalExtensions.interRATHandoverInfo-vb50ext.ue-RadioAccessCapabilityInfo-vb50ext.ue-RadioAccessCapabBandFDDList6.radioFrequencyBandFDD"
     ],
     "kind": "stringList",
     "description": "Radio frequency band FDD (TS 25.101)"
@@ -293,6 +308,11 @@ export const UTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "Band",
     "leaf": "radioFrequencyBandFDD2",
     "path": "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList2",
+    "pathAlternatives": [
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.interRATHandoverInfo-v690ext1.ue-RadioAccessCapability-v650ext.ue-RadioAccessCapabBandFDDList2.radioFrequencyBandFDD2",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.v3g0NonCriticalExtensions.v4b0NonCriticalExtensions.v4d0NonCriticalExtensions.v590NonCriticalExtensions.v690NonCriticalExtensions.v6b0NonCriticalExtensions.v6e0NonCriticalExtensions.v770NonCriticalExtensions.v790nonCriticalExtensions.v860NonCriticalExtensions.interRATHandoverInfo-v860ext.ue-RadioAccessCapabilityInfo.ue-RadioAccessCapabBandFDDList3.radioFrequencyBandFDD2",
+      "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.v3g0NonCriticalExtensions.v4b0NonCriticalExtensions.v4d0NonCriticalExtensions.v590NonCriticalExtensions.v690NonCriticalExtensions.v6b0NonCriticalExtensions.v6e0NonCriticalExtensions.v770NonCriticalExtensions.v790nonCriticalExtensions.v860NonCriticalExtensions.v880NonCriticalExtensions.v920NonCriticalExtensions.v8b0NonCriticalExtensions.v950NonCriticalExtensions.va40NonCriticalExtensions.va80NonCriticalExtensions.vb50NonCriticalExtensions.interRATHandoverInfo-vb50ext.ue-RadioAccessCapabilityInfo-vb50ext.ue-RadioAccessCapabBandFDDList6.radioFrequencyBandFDD2"
+    ],
     "kind": "stringList",
     "description": "Radio frequency band FDD extension (TS 25.101)"
   },
@@ -519,7 +539,7 @@ export const UTRA_FEATURE_SPECS: FeatureSpec[] = [
     "middle": "HSPA",
     "leaf": "supportEDPDCHPowerInterpolation",
     "path": "v390NonCriticalExtensions.present.v3a0NonCriticalExtensions.laterNonCriticalExtensions.interRATHandoverInfo-r3-add-ext.v7e0NonCriticalExtensions.interRATHandoverInfo-v7e0ext.ue-RadioAccessCapability.supportEDPDCHPowerInterpolation",
-    "kind": "enum",
+    "kind": "bool",
     "description": "E-DPDCH power interpolation support (TS 25.211)"
   },
   {

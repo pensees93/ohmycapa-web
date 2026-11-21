@@ -1,0 +1,62 @@
+name: Auto-Add Unclassified 3GPP Feature Specs
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply-auto-spec:
+    if: contains(github.event.issue.body, '<!-- OHMYCAPA_AUTO_SPEC_START -->')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply new FeatureSpecs from Issue body
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: node scripts/apply-issue-specs.mjs
+
+      - name: Check for modified spec files
+        id: git-check
+        run: |
+          if [ -n "$(git status --porcelain packages/capa-core/src/normalizer/specs)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run unit tests & build
+        if: steps.git-check.outputs.changed == 'true'
+        run: |
+          npm test
+          npm run build
+
+      - name: Create Pull Request
+        if: steps.git-check.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "feat(capa-core): auto-register 3GPP specs from issue #${{ github.event.issue.number }}"
+          title: "feat(capa-core): auto-register 3GPP specs from issue #${{ github.event.issue.number }}"
+          body: |
+            Automatically generated from issue #${{ github.event.issue.number }} (`${{ github.event.issue.title }}`).
+
+            - Parsed `<!-- OHMYCAPA_AUTO_SPEC_START -->` payload via `scripts/apply-issue-specs.mjs`
+            - Deduplicated against existing `FeatureSpec` tables
+            - Verified with `npm test` and `npm run build`
+          branch: "auto-spec/issue-${{ github.event.issue.number }}"
+          base: main
+          labels: auto-spec

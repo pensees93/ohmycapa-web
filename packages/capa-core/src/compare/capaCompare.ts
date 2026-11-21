@@ -1121,6 +1121,8 @@ function compareFeatureLeaves(
       b: b?.value,
       description: ref.description,
       bit: ref.bit,
+      ...(ref.path ? { path: ref.path } : {}),
+      ...(a?.autoDiscovered || b?.autoDiscovered ? { autoDiscovered: true } : {}),
     };
 
     if (!a) {
