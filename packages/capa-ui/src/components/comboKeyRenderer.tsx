@@ -13,7 +13,6 @@
  *   UL 64QAM  → teal  ◇
  */
 import React from 'react';
-import Tooltip from '@mui/material/Tooltip';
 import Box from '@mui/material/Box';
 import { useTheme } from '@mui/material/styles';
 import type { ComboDisplayOptions } from '@ohmycapa/capa-core';
@@ -285,7 +284,7 @@ function matchSegments(targetSegs: SegmentTokens[], refSegs: SegmentTokens[]): (
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-const COMBO_KEY_CACHE_MAX = 4000;
+const COMBO_KEY_CACHE_MAX = 8000;
 const _comboKeyCache = new Map<string, React.ReactNode>();
 
 function cacheGet(key: string): React.ReactNode | undefined {
@@ -321,19 +320,9 @@ const COMBO_SPAN_STYLE: React.CSSProperties = {
 
 function wrapComboTooltip(tooltipText: string, children: React.ReactNode): React.ReactNode {
   return (
-    <Tooltip
-      title={
-        <Box sx={{ fontFamily: MONO_FONT_STACK, fontSize: '0.72rem', maxWidth: 480, wordBreak: 'break-all' }}>
-          {tooltipText}
-        </Box>
-      }
-      placement="top"
-      enterDelay={300}
-    >
-      <span style={COMBO_SPAN_STYLE}>
-        {children}
-      </span>
-    </Tooltip>
+    <span title={tooltipText} style={COMBO_SPAN_STYLE}>
+      {children}
+    </span>
   );
 }
 

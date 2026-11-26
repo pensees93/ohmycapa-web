@@ -141,9 +141,16 @@ const RatDetailView = memo<{
   }
 
   const targetForRat = drillDownTarget?.rat === ratType ? drillDownTarget : null;
+  const isCombosSection = activeSection === 'combos' && Boolean(ratResult);
 
   return (
-    <Box sx={{ p: 1.5, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+    <Box
+      sx={
+        isCombosSection
+          ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }
+          : { p: 1.5, flex: 1, minHeight: 0, overflowY: 'auto' }
+      }
+    >
       {activeSection === 'combos' && ratResult && (
         <ComboCompareView
           key={`combos-${ratType}`}

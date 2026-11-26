@@ -1,11 +1,13 @@
-import React, { useState, useCallback, useDeferredValue, memo, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useDeferredValue, memo, useMemo, useEffect, useTransition } from 'react';
 import {
-  Box, Typography, Chip, Paper, Tabs, Tab,
+  Box, Typography, Chip, Paper, Tabs, Tab, Button,
   useTheme, Collapse, Checkbox, FormControlLabel, IconButton, Tooltip,
   TextField, InputAdornment, ToggleButtonGroup, ToggleButton,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
+import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
 import DownloadIcon from '@mui/icons-material/Download';
 import SearchIcon from '@mui/icons-material/Search';
 import CloseIcon from '@mui/icons-material/Close';
@@ -25,7 +27,8 @@ import type {
 import { renderComboKey, ComboSymbolLegend } from './comboKeyRenderer';
 import { SingleDeviceFeaturesView } from './FeaturesCompareView';
 import { BandFilterChips } from './BandFilterChips';
-import { CopyActionButton } from './featureRenderHelpers';
+import { VirtualList } from './VirtualList';
+import { copyTextToClipboard } from '../utils/clipboardUtils';
 import {
   DEVICE_COLOR,
   MONO_FONT_FAMILY,
@@ -341,120 +344,212 @@ const NATURAL_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivi
 interface ComboListItem {
   combo: BandCombination;
   displayKey: string;
+  naturalRank: number;
+  estimatedHeight: number;
 }
 
-function resolveComboKey(combo: BandCombination, options: ComboDisplayOptions): string {
-  if (options.showMimo !== false && options.showQam !== false && combo.key) {
-    return combo.key;
-  }
-  return generateCombinationKey(combo, options);
-}
+type VirtualSingleComboItem =
+  | { type: 'group'; key: string; groupKey: string; title: string; count: number; collapsed: boolean }
+  | { type: 'row'; key: string; item: ComboListItem };
 
-const ComboGroup = memo<{ title: string; items: ComboListItem[]; options: ComboDisplayOptions }>(({ title, items, options }) => {
-  const [open, setOpen] = useState(true);
-  const isDark = useTheme().palette.mode === 'dark';
+const SINGLE_COPY_BTN_STYLE: React.CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  padding: 3,
+  cursor: 'pointer',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: 4,
+  color: 'inherit',
+  lineHeight: 1,
+};
 
+const SingleInlineCopyButton = memo<{ getText: () => string }>(({ getText }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    void copyTextToClipboard(getText()).then(ok => {
+      if (!ok) return;
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    });
+  }, [getText]);
+
+  const label = copied ? 'Copied!' : 'Copy combination';
   return (
-    <Box sx={{ mb: 1 }}>
-      <Box
-        onClick={() => setOpen(v => !v)}
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1,
-          cursor: 'pointer',
-          py: 0.45,
-          px: 0.5,
-          borderRadius: 1,
-          '&:hover': { bgcolor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.04)' },
-        }}
-      >
-        <Typography variant="caption" sx={{ fontWeight: 700, fontSize: '0.72rem', fontFamily: MONO_FONT_FAMILY, color: 'text.primary', whiteSpace: 'nowrap' }}>
-          {title}
-        </Typography>
-        <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />
-        <Typography variant="caption" sx={{ fontSize: '0.64rem', fontFamily: MONO_FONT_FAMILY, color: 'text.disabled', whiteSpace: 'nowrap' }}>
-          {items.length} combos
-        </Typography>
-        {open ? <ExpandLessIcon sx={{ fontSize: 14, color: 'text.disabled' }} /> : <ExpandMoreIcon sx={{ fontSize: 14, color: 'text.disabled' }} />}
-      </Box>
-
-      <Collapse in={open}>
-        <Box sx={{ mt: 0.4, px: 0.25 }}>
-          {items.map(({ combo, displayKey }, i) => (
-            <Box
-              key={`${displayKey}-${i}`}
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 0.75,
-                px: 1,
-                py: 0.5,
-                mb: 0.4,
-                minHeight: 28,
-                borderRadius: 1.25,
-                border: '1px solid',
-                borderColor: 'divider',
-                bgcolor: isDark ? 'rgba(255,255,255,0.025)' : 'rgba(15,23,42,0.015)',
-                contentVisibility: 'auto',
-                containIntrinsicSize: '0 32px',
-                '& .single-combo-copy': { opacity: { xs: 0.75, md: 0.15 }, transition: 'opacity 120ms' },
-                '&:hover .single-combo-copy, &:focus-within .single-combo-copy': { opacity: 1 },
-              }}
-            >
-              <Typography variant="caption" component="div" sx={{ fontSize: '0.76rem', color: 'text.primary', lineHeight: 1.3, overflow: 'hidden', minWidth: 0, flex: 1 }}>
-                {renderComboKey({ key: displayKey, powerClass: combo.powerClass }, options, isDark)}
-              </Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
-                {combo.powerClass && (
-                  <Chip
-                    label={combo.powerClass}
-                    size="small"
-                    sx={{ height: 15, fontSize: '0.58rem', fontWeight: 600, bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(15,23,42,0.06)' }}
-                  />
-                )}
-                <Box className="single-combo-copy">
-                  <CopyActionButton
-                    getText={() => (combo.powerClass ? `${displayKey} (${combo.powerClass})` : displayKey)}
-                    tooltip="Copy combination"
-                    size={12}
-                  />
-                </Box>
-              </Box>
-            </Box>
-          ))}
-        </Box>
-      </Collapse>
-    </Box>
+    <button
+      type="button"
+      onClick={handleClick}
+      aria-label={label}
+      title={label}
+      style={{
+        ...SINGLE_COPY_BTN_STYLE,
+        color: copied ? STATUS_COLOR.green : 'inherit',
+        opacity: copied ? 1 : 0.65,
+      }}
+    >
+      {copied ? (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" data-testid="CheckIcon" aria-hidden="true">
+          <path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+        </svg>
+      ) : (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
+        </svg>
+      )}
+    </button>
   );
 });
 
-const ComboList = memo<{ combos: BandCombination[]; options: ComboDisplayOptions; ratType: RatType }>(({ combos, options, ratType }) => {
-  const processedGroups = useMemo(() => {
-    if (combos.length === 0) return [];
-
-    const deduped: ComboListItem[] = [];
-    if (options.mergeRedundant !== false) {
-      const seen = new Set<string>();
-      for (const c of combos) {
-        const displayKey = resolveComboKey(c, options);
-        if (!seen.has(displayKey)) {
-          seen.add(displayKey);
-          deduped.push({ combo: c, displayKey });
+const SingleGroupHeader = memo<{
+  groupKey: string;
+  title: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: (groupKey: string) => void;
+}>(({ groupKey, title, count, collapsed, onToggle }) => (
+  <div style={{ paddingBottom: collapsed ? 4 : 3 }}>
+    <div
+      role="button"
+      tabIndex={0}
+      className="capa-single-combo-group"
+      onClick={() => onToggle(groupKey)}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onToggle(groupKey);
         }
-      }
-    } else {
-      for (const c of combos) {
-        deduped.push({ combo: c, displayKey: resolveComboKey(c, options) });
-      }
-    }
+      }}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        cursor: 'pointer',
+        padding: '4px 5px',
+        borderRadius: 4,
+      }}
+    >
+      <span style={{ fontWeight: 700, fontSize: '0.72rem', fontFamily: MONO_FONT_FAMILY, whiteSpace: 'nowrap' }}>
+        {title}
+      </span>
+      <span style={{ flex: 1, height: 1, backgroundColor: 'currentColor', opacity: 0.14 }} />
+      <span style={{ fontSize: '0.64rem', fontFamily: MONO_FONT_FAMILY, opacity: 0.55, whiteSpace: 'nowrap' }}>
+        {count} combos
+      </span>
+      {collapsed ? <ExpandMoreIcon sx={{ fontSize: 14, opacity: 0.5 }} /> : <ExpandLessIcon sx={{ fontSize: 14, opacity: 0.5 }} />}
+    </div>
+  </div>
+));
 
+const SingleComboRow = memo<{ item: ComboListItem; options: ComboDisplayOptions; isDark: boolean }>(({ item, options, isDark }) => {
+  const { combo, displayKey } = item;
+  const getCopyText = useCallback(
+    () => (combo.powerClass ? `${displayKey} (${combo.powerClass})` : displayKey),
+    [combo.powerClass, displayKey]
+  );
+
+  return (
+    <div style={{ paddingBottom: 4 }}>
+      <div
+        className="capa-single-combo-row"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 6,
+          padding: '4px 8px',
+          minHeight: 28,
+          boxSizing: 'border-box',
+          borderRadius: 5,
+          border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(15,23,42,0.1)',
+          backgroundColor: isDark ? 'rgba(255,255,255,0.025)' : 'rgba(15,23,42,0.015)',
+        }}
+      >
+        <div style={{ fontSize: '0.76rem', lineHeight: 1.3, overflow: 'hidden', minWidth: 0, flex: 1 }}>
+          {renderComboKey({ key: displayKey, powerClass: combo.powerClass }, options, isDark)}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          {combo.powerClass && (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                height: 15,
+                padding: '0 6px',
+                borderRadius: 8,
+                fontSize: '0.58rem',
+                fontWeight: 600,
+                backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(15,23,42,0.06)',
+              }}
+            >
+              {combo.powerClass}
+            </span>
+          )}
+          <div className="single-combo-copy" style={{ opacity: 0.25, transition: 'opacity 120ms' }}>
+            <SingleInlineCopyButton getText={getCopyText} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+interface IndexedSingleCombo {
+  combo: BandCombination;
+  displayKey: string;
+  lowerKey: string;
+  bandKeys: Set<string>;
+  dlLevel: number;
+  ulLevel: number;
+  eutraDlCc: number;
+  nrDlCc: number;
+  groupKey: string;
+  groupTitle: string;
+  naturalRank: number;
+  estimatedHeight: number;
+}
+
+const BandComboSection = memo<{ combos: BandCombination[]; ratType: RatType }>(({ combos, ratType }) => {
+  const isDark = useTheme().palette.mode === 'dark';
+  const surface = getWorkbenchSurface(isDark);
+  const [mergeRedundant, setMergeRedundant] = useState(true);
+  const options = useMemo<ComboDisplayOptions>(
+    () => ({ showQam: true, showMimo: true, mergeRedundant }),
+    [mergeRedundant]
+  );
+  const [selectedBands, setSelectedBands] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState('');
+  const deferredSearch = useDeferredValue(search);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [, startTransition] = useTransition();
+
+  const { allBands, indexedCombos } = useMemo(() => {
+    const seen = new Set<string>();
+    const bandList: { ratType: 'nr' | 'eutra'; band: number }[] = [];
     const isEndc = ratType === 'eutra-nr';
-    const grouped = new Map<string, { title: string; dlLevel: number; ulLevel: number; eutraDlCc: number; nrDlCc: number; items: ComboListItem[] }>();
 
-    for (const item of deduped) {
-      const c = item.combo;
+    const rawIndexed: IndexedSingleCombo[] = [];
+    const seenMerge = new Set<string>();
+
+    for (const c of combos) {
+      const displayKey = mergeRedundant && c.key
+        ? c.key
+        : generateCombinationKey(c, { showQam: true, showMimo: true, mergeRedundant });
+
+      if (mergeRedundant) {
+        if (seenMerge.has(displayKey)) continue;
+        seenMerge.add(displayKey);
+      }
+
+      const bandKeys = new Set<string>();
+      for (const b of c.bands) {
+        const k = `${b.ratType}:${b.band}`;
+        bandKeys.add(k);
+        if (!seen.has(k)) { seen.add(k); bandList.push({ ratType: b.ratType, band: b.band }); }
+      }
+
       const dlLevel = c.dlCc ?? c.bands.reduce((s: number, b: BandParameter) => s + (b.bandwidthClassDL ? getBwClassCcCount(b.bandwidthClassDL, b.ratType, b.ratType === 'nr' && b.band >= 257) : 0), 0);
       const ulLevel = c.ulCc ?? c.bands.reduce((s: number, b: BandParameter) => s + (b.bandwidthClassUL ? getBwClassCcCount(b.bandwidthClassUL, b.ratType, b.ratType === 'nr' && b.band >= 257) : 0), 0);
 
@@ -469,79 +564,38 @@ const ComboList = memo<{ combos: BandCombination[]; options: ComboDisplayOptions
         }
       }
 
-      const key = isEndc
+      const groupKey = isEndc
         ? `${eutraDlCc}LTE+${nrDlCc}NR·${dlLevel}DL${ulLevel}UL`
         : `${dlLevel}DL${ulLevel}UL`;
-      const title = isEndc
+      const groupTitle = isEndc
         ? `${eutraDlCc}LTE + ${nrDlCc}NR · ${dlLevel}DL${ulLevel}UL-ENDC`
         : `${dlLevel}DL${ulLevel}UL-CA`;
 
-      if (!grouped.has(key)) {
-        grouped.set(key, { title, dlLevel, ulLevel, eutraDlCc, nrDlCc, items: [] });
-      }
-      grouped.get(key)!.items.push(item);
+      rawIndexed.push({
+        combo: c,
+        displayKey,
+        lowerKey: displayKey.toLowerCase(),
+        bandKeys,
+        dlLevel,
+        ulLevel,
+        eutraDlCc,
+        nrDlCc,
+        groupKey,
+        groupTitle,
+        naturalRank: 0,
+        estimatedHeight: displayKey.length > 96 ? 48 : 34,
+      });
     }
 
-    return [...grouped.entries()]
-      .sort(([, a], [, b]) => {
-        if (b.dlLevel !== a.dlLevel) return b.dlLevel - a.dlLevel;
-        if (b.ulLevel !== a.ulLevel) return b.ulLevel - a.ulLevel;
-        if (b.nrDlCc !== a.nrDlCc) return b.nrDlCc - a.nrDlCc;
-        return b.eutraDlCc - a.eutraDlCc;
-      })
-      .map(([key, g]) => {
-        const sortedItems = [...g.items].sort((a, b) => NATURAL_COLLATOR.compare(a.displayKey, b.displayKey));
-        return { key, title: g.title, items: sortedItems };
-      });
-  }, [combos, options, ratType]);
-
-  if (combos.length === 0) {
-    return (
-      <Box sx={{ py: 3, textAlign: 'center', color: 'text.disabled' }}>
-        <Typography variant="body2">No band combinations</Typography>
-      </Box>
-    );
-  }
-
-  return (
-    <Box>
-      {processedGroups.map(({ key, title, items }) => (
-        <ComboGroup key={key} title={title} items={items} options={options} />
-      ))}
-    </Box>
-  );
-});
-
-// ─── Band combo section (sticky toolbar + list) ───────────────────────────────
-
-const BandComboSection = memo<{ combos: BandCombination[]; ratType: RatType }>(({ combos, ratType }) => {
-  const isDark = useTheme().palette.mode === 'dark';
-  const surface = getWorkbenchSurface(isDark);
-  const [mergeRedundant, setMergeRedundant] = useState(true);
-  const options = useMemo<ComboDisplayOptions>(
-    () => ({ showQam: true, showMimo: true, mergeRedundant }),
-    [mergeRedundant]
-  );
-  const [selectedBands, setSelectedBands] = useState<Set<string>>(new Set());
-  const [search, setSearch] = useState('');
-  const deferredSearch = useDeferredValue(search);
-
-  const { allBands, indexedCombos } = useMemo(() => {
-    const seen = new Set<string>();
-    const bandList: { ratType: 'nr' | 'eutra'; band: number }[] = [];
-    const indexed = combos.map(c => {
-      const bandKeys = new Set<string>();
-      for (const b of c.bands) {
-        const k = `${b.ratType}:${b.band}`;
-        bandKeys.add(k);
-        if (!seen.has(k)) { seen.add(k); bandList.push({ ratType: b.ratType, band: b.band }); }
-      }
-      const key = c.key || generateCombinationKey(c, { showQam: true, showMimo: true });
-      return { combo: c, lowerKey: key.toLowerCase(), bandKeys };
+    const order = rawIndexed.map((_, i) => i);
+    order.sort((a, b) => NATURAL_COLLATOR.compare(rawIndexed[a].displayKey, rawIndexed[b].displayKey));
+    order.forEach((origIdx, rank) => {
+      rawIndexed[origIdx].naturalRank = rank;
     });
+
     bandList.sort((a, b) => (a.ratType === b.ratType ? a.band - b.band : a.ratType === 'eutra' ? -1 : 1));
-    return { allBands: bandList, indexedCombos: indexed };
-  }, [combos]);
+    return { allBands: bandList, indexedCombos: rawIndexed };
+  }, [combos, ratType, mergeRedundant]);
 
   const validBandKeySet = useMemo(
     () => new Set(allBands.map(b => `${b.ratType}:${b.band}`)),
@@ -553,41 +607,125 @@ const BandComboSection = memo<{ combos: BandCombination[]; ratType: RatType }>((
     [selectedBands, validBandKeySet]
   );
 
-  const filteredCombos = useMemo(() => {
+  const filteredIndexed = useMemo(() => {
     const selectedArr = effectiveSelectedBands.size > 0 ? [...effectiveSelectedBands] : null;
     const searchLower = deferredSearch ? deferredSearch.toLowerCase() : '';
-    if (!selectedArr && !searchLower) return combos;
-    return indexedCombos
-      .filter(item =>
-        (!selectedArr || selectedArr.every(k => item.bandKeys.has(k))) &&
-        (!searchLower || item.lowerKey.includes(searchLower))
-      )
-      .map(item => item.combo);
-  }, [combos, indexedCombos, effectiveSelectedBands, deferredSearch]);
+    if (!selectedArr && !searchLower) return indexedCombos;
+    return indexedCombos.filter(item =>
+      (!selectedArr || selectedArr.every(k => item.bandKeys.has(k))) &&
+      (!searchLower || item.lowerKey.includes(searchLower))
+    );
+  }, [indexedCombos, effectiveSelectedBands, deferredSearch]);
+
+  const processedGroups = useMemo(() => {
+    const grouped = new Map<string, { title: string; dlLevel: number; ulLevel: number; eutraDlCc: number; nrDlCc: number; items: ComboListItem[] }>();
+    for (const item of filteredIndexed) {
+      let g = grouped.get(item.groupKey);
+      if (!g) {
+        g = {
+          title: item.groupTitle,
+          dlLevel: item.dlLevel,
+          ulLevel: item.ulLevel,
+          eutraDlCc: item.eutraDlCc,
+          nrDlCc: item.nrDlCc,
+          items: [],
+        };
+        grouped.set(item.groupKey, g);
+      }
+      g.items.push({
+        combo: item.combo,
+        displayKey: item.displayKey,
+        naturalRank: item.naturalRank,
+        estimatedHeight: item.estimatedHeight,
+      });
+    }
+
+    return [...grouped.entries()]
+      .sort(([, a], [, b]) => {
+        if (b.dlLevel !== a.dlLevel) return b.dlLevel - a.dlLevel;
+        if (b.ulLevel !== a.ulLevel) return b.ulLevel - a.ulLevel;
+        if (b.nrDlCc !== a.nrDlCc) return b.nrDlCc - a.nrDlCc;
+        return b.eutraDlCc - a.eutraDlCc;
+      })
+      .map(([key, g]) => {
+        g.items.sort((a, b) => a.naturalRank - b.naturalRank);
+        return { key, title: g.title, items: g.items };
+      });
+  }, [filteredIndexed]);
 
   const toggleBand = useCallback((key: string) => {
-    setSelectedBands(prev => {
-      const n = new Set(prev);
-      if (n.has(key)) n.delete(key);
-      else n.add(key);
-      return n;
+    startTransition(() => {
+      setSelectedBands(prev => {
+        const n = new Set(prev);
+        if (n.has(key)) n.delete(key);
+        else n.add(key);
+        return n;
+      });
     });
   }, []);
 
+  const toggleGroup = useCallback((groupKey: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  }, []);
+
+  const allCollapsed = processedGroups.length > 0 && processedGroups.every(g => collapsedGroups.has(g.key));
+  const toggleAllGroups = useCallback(() => {
+    if (allCollapsed) setCollapsedGroups(new Set());
+    else setCollapsedGroups(new Set(processedGroups.map(g => g.key)));
+  }, [allCollapsed, processedGroups]);
+
+  const virtualItems = useMemo<VirtualSingleComboItem[]>(() => {
+    const flat: VirtualSingleComboItem[] = [];
+    for (const g of processedGroups) {
+      const collapsed = collapsedGroups.has(g.key);
+      flat.push({ type: 'group', key: `sgrp:${g.key}`, groupKey: g.key, title: g.title, count: g.items.length, collapsed });
+      if (!collapsed) {
+        for (let i = 0; i < g.items.length; i++) {
+          const it = g.items[i];
+          flat.push({ type: 'row', key: `srow:${g.key}:${it.displayKey}:${i}`, item: it });
+        }
+      }
+    }
+    return flat;
+  }, [processedGroups, collapsedGroups]);
+
+  const getVirtualKey = useCallback((v: VirtualSingleComboItem) => v.key, []);
+  const estimateVirtualHeight = useCallback(
+    (v: VirtualSingleComboItem) => (v.type === 'group' ? 30 : v.item.estimatedHeight),
+    []
+  );
+  const renderVirtualItem = useCallback((v: VirtualSingleComboItem) => {
+    if (v.type === 'group') {
+      return (
+        <SingleGroupHeader
+          groupKey={v.groupKey}
+          title={v.title}
+          count={v.count}
+          collapsed={v.collapsed}
+          onToggle={toggleGroup}
+        />
+      );
+    }
+    return <SingleComboRow item={v.item} options={options} isDark={isDark} />;
+  }, [toggleGroup, options, isDark]);
+
   const isFiltered = effectiveSelectedBands.size > 0 || !!deferredSearch;
+  const resetScrollKey = `${ratType}|${mergeRedundant}|${deferredSearch}|${[...effectiveSelectedBands].join(',')}`;
 
   return (
-    <Box>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <Box
         sx={{
-          position: 'sticky',
-          top: -12,
+          flexShrink: 0,
           zIndex: 5,
           pt: 1.25,
           pb: 0.75,
-          mx: -1.5,
           px: 1.5,
-          mb: 1,
           bgcolor: surface.toolbarBg,
           backdropFilter: 'blur(8px)',
           borderBottom: '1px solid',
@@ -595,7 +733,7 @@ const BandComboSection = memo<{ combos: BandCombination[]; ratType: RatType }>((
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.75, flexWrap: 'wrap' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
             <TextField
               size="small"
               placeholder="Search combo..."
@@ -617,28 +755,74 @@ const BandComboSection = memo<{ combos: BandCombination[]; ratType: RatType }>((
               sx={{ width: { xs: '100%', sm: 170 } }}
             />
             <FormControlLabel
-              control={<Checkbox size="small" checked={mergeRedundant} onChange={e => setMergeRedundant(e.target.checked)} sx={{ p: 0.3 }} />}
+              control={<Checkbox size="small" checked={mergeRedundant} onChange={e => startTransition(() => setMergeRedundant(e.target.checked))} sx={{ p: 0.3 }} />}
               label={<Typography sx={{ fontSize: '0.64rem' }}>Merge</Typography>}
               sx={{ m: 0 }}
             />
+            {processedGroups.length > 1 && (
+              <Tooltip title={allCollapsed ? 'Expand all combo groups' : 'Collapse all combo groups'} arrow placement="top">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={toggleAllGroups}
+                  startIcon={allCollapsed ? <UnfoldMoreIcon sx={{ fontSize: 13 }} /> : <UnfoldLessIcon sx={{ fontSize: 13 }} />}
+                  sx={{
+                    py: 0.2,
+                    px: 0.75,
+                    minHeight: 24,
+                    fontSize: '0.64rem',
+                    textTransform: 'none',
+                    borderColor: 'divider',
+                    color: 'text.secondary',
+                    '& .MuiButton-startIcon': { mr: 0.35 },
+                  }}
+                >
+                  {allCollapsed ? 'Expand All' : 'Collapse All'}
+                </Button>
+              </Tooltip>
+            )}
           </Box>
           <Chip
             size="small"
-            label={isFiltered ? `${filteredCombos.length} / ${combos.length} combos` : `${combos.length} combos`}
+            label={isFiltered ? `${filteredIndexed.length} / ${indexedCombos.length} combos` : `${indexedCombos.length} combos`}
             sx={{ height: 18, fontSize: '0.62rem', fontWeight: 600, bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(15,23,42,0.06)' }}
           />
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1.5, flexWrap: 'wrap' }}>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             {allBands.length > 0 && (
-              <BandFilterChips allBands={allBands} selected={effectiveSelectedBands} onToggle={toggleBand} onClear={() => setSelectedBands(new Set())} />
+              <BandFilterChips allBands={allBands} selected={effectiveSelectedBands} onToggle={toggleBand} onClear={() => startTransition(() => setSelectedBands(new Set()))} />
             )}
           </Box>
           <ComboSymbolLegend />
         </Box>
       </Box>
 
-      <ComboList combos={filteredCombos} options={options} ratType={ratType} />
+      {filteredIndexed.length === 0 ? (
+        <Box sx={{ py: 3, textAlign: 'center', color: 'text.disabled' }}>
+          <Typography variant="body2">No band combinations</Typography>
+        </Box>
+      ) : (
+        <VirtualList
+          items={virtualItems}
+          getItemKey={getVirtualKey}
+          estimateHeight={estimateVirtualHeight}
+          renderItem={renderVirtualItem}
+          overscan={10}
+          threshold={80}
+          resetScrollKey={resetScrollKey}
+          sx={{
+            px: 1.5,
+            py: 1,
+            '& .capa-single-combo-row:hover .single-combo-copy, & .capa-single-combo-row:focus-within .single-combo-copy': {
+              opacity: '1 !important',
+            },
+            '& .capa-single-combo-group:hover': {
+              bgcolor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.04)',
+            },
+          }}
+        />
+      )}
     </Box>
   );
 });
@@ -902,7 +1086,14 @@ export const SingleDeviceView: React.FC<SingleDeviceViewProps> = ({
 
         {availableRats.length > 0 && activeRatValue && (activeRatInfo || (activeRatFeatures?.leaves.length ?? 0) > 0) ? (
           hasActiveData ? (
-            <Box key={activeRatValue} sx={{ p: 1.5, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+            <Box
+              key={activeRatValue}
+              sx={
+                activeSection === 'combos' && activeRatInfo
+                  ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }
+                  : { p: 1.5, flex: 1, minHeight: 0, overflowY: 'auto' }
+              }
+            >
               {activeSection === 'combos' && activeRatInfo && (
                 <BandComboSection
                   key={`single-combos-${activeRatValue}`}
