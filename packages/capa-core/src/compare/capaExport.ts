@@ -438,7 +438,7 @@ export async function buildSingleDeviceWorkbook(device: CompareFormat): Promise<
         comboRows.push([
           idx + 1,
           fsc,
-          combo.bands.reduce((s, b) => s + getBwClassCcCount(b.bandwidthClassDL), 0),
+          combo.dlCc ?? combo.bands.reduce((s, b) => s + (b.bandwidthClassDL ? getBwClassCcCount(b.bandwidthClassDL, b.ratType, b.ratType === 'nr' && b.band >= 257) : 0), 0),
           generateCombinationKey(combo),
           valStr(combo.supportedBandwidthCombinationSet),
           valStr(combo.supportedBandwidthCombinationSetEUTRA),

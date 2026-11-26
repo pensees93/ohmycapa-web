@@ -135,6 +135,7 @@ function shouldSkipPath(path: string): boolean {
   const segments = path.split('.');
   const last = segments[segments.length - 1] ?? '';
   if (SKIP_KEYS.has(last)) return true;
+  if (segments.some((seg) => /^dummy\d*$/i.test(seg) || /^spare/i.test(seg))) return true;
   if (RE_SKIP_COMBO_LIST.test(path)) return true;
 
   for (const prefix of SKIP_PREFIXES) {
@@ -287,18 +288,20 @@ export function collectUnclassifiedFeatures(
   }
 
   const unclassified: UnknownFeature[] = [];
+  const seenEffectivePaths = new Set<string>();
   for (const [path, value] of featureMap.entries()) {
     const normalizedVal = isRecord(value) && typeof value['supported'] === 'string' && Object.keys(value).length === 1
       ? value['supported']
       : value;
     if (!isLeafScalarOrPrimitiveArray(normalizedVal)) continue;
-    if (shouldSkipPath(path)) continue;
 
     // Ignore `.supported` child when parent inline CHOICE path is already covered
     const effectivePath = path.endsWith('.supported') ? path.slice(0, -'.supported'.length) : path;
-    if (knownPaths.has(path) || knownPaths.has(effectivePath)) {
+    if (shouldSkipPath(path) || shouldSkipPath(effectivePath)) continue;
+    if (knownPaths.has(path) || knownPaths.has(effectivePath) || seenEffectivePaths.has(effectivePath)) {
       continue;
     }
+    seenEffectivePaths.add(effectivePath);
 
     const { major, middle, leaf, kind, description } = classifyUnknownFeaturePath(
       effectivePath,

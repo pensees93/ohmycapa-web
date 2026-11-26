@@ -19,6 +19,7 @@ import type {
   UnifiedFeatureSetData,
 } from '../types/capaTypes';
 import { mergeExtraBws, calcMaxNRBw } from './channelBw';
+import { getBwClassCcCount } from './comboKey';
 import {
   extractMhzValue,
   extractNumber,
@@ -352,6 +353,7 @@ function applyEutraFeatureSetToBandParam(
 
 /**
  * Resolve FeatureSetCombination references onto BandParameters in NR/MRDC BandCombinations,
+ * expanding mutually exclusive FeatureSetsPerBand option columns per 3GPP TS 38.331 §6.2.2,
  * and enrich NRBandInfo entries from resolved FeatureSets.
  */
 export function resolveBandCombinationsWithFeatureSets(
@@ -361,54 +363,116 @@ export function resolveBandCombinationsWithFeatureSets(
   nrMap: Map<number, NRFeatureSet> | undefined,
   eutraMap: Map<number, EUTRAFeatureSet> | undefined,
   nrBands: NRBandInfo[]
-): void {
+): BandCombination[] {
   const nrBandLookup = new Map<number, NRBandInfo>();
   for (const b of nrBands) {
     nrBandLookup.set(b.band, b);
   }
 
+  const resolvedCombos: BandCombination[] = [];
+
   for (let cIdx = 0; cIdx < combos.length; cIdx++) {
     const combo = combos[cIdx];
     const fscIdx = combo.featureSetCombination;
-    if (fscIdx === undefined || !fscList || fscIdx < 0 || fscIdx >= fscList.length) continue;
+    void rawBandLists[cIdx];
+
+    if (fscIdx === undefined || !fscList || fscIdx < 0 || fscIdx >= fscList.length) {
+      resolvedCombos.push(combo);
+      continue;
+    }
 
     const perBandOptions = fscList[fscIdx];
+
+    // Enrich NRBandInfo across all options for band-level capability summaries
     for (let bIdx = 0; bIdx < combo.bands.length && bIdx < perBandOptions.length; bIdx++) {
       const bp = combo.bands[bIdx];
-      const options = perBandOptions[bIdx];
-      if (!options || options.length === 0) continue;
-
-      for (const opt of options) {
-        if (bp.ratType === 'nr' && nrMap) {
-          if (opt.dl && opt.dl > 0) {
-            const dlFs = nrMap.get(opt.dl);
-            if (dlFs) {
-              applyNrFeatureSetToBandParam(bp, dlFs, Boolean(bp.bandwidthClassDL), false);
-              enrichNrBandFromFs(nrBandLookup.get(bp.band), opt.dl, dlFs, true, false);
-            }
-          }
-          if (opt.ul && opt.ul > 0) {
-            const ulFs = nrMap.get(opt.ul);
-            if (ulFs) {
-              applyNrFeatureSetToBandParam(bp, ulFs, false, Boolean(bp.bandwidthClassUL));
-              enrichNrBandFromFs(nrBandLookup.get(bp.band), opt.ul, ulFs, false, true);
-            }
-          }
-        } else if (bp.ratType === 'eutra' && eutraMap) {
-          if (opt.dl && opt.dl > 0) {
-            const dlFs = eutraMap.get(opt.dl);
-            if (dlFs) applyEutraFeatureSetToBandParam(bp, dlFs, Boolean(bp.bandwidthClassDL), false);
-          }
-          if (opt.ul && opt.ul > 0) {
-            const ulFs = eutraMap.get(opt.ul);
-            if (ulFs) applyEutraFeatureSetToBandParam(bp, ulFs, false, Boolean(bp.bandwidthClassUL));
-          }
+      if (bp.ratType !== 'nr' || !nrMap) continue;
+      for (const opt of perBandOptions[bIdx] ?? []) {
+        if (opt.dl && opt.dl > 0) {
+          const dlFs = nrMap.get(opt.dl);
+          if (dlFs) enrichNrBandFromFs(nrBandLookup.get(bp.band), opt.dl, dlFs, true, false);
+        }
+        if (opt.ul && opt.ul > 0) {
+          const ulFs = nrMap.get(opt.ul);
+          if (ulFs) enrichNrBandFromFs(nrBandLookup.get(bp.band), opt.ul, ulFs, false, true);
         }
       }
     }
 
-    // Also store first NR DL featureSet index if present on combo
-    void rawBandLists[cIdx];
+    const optionCounts = combo.bands
+      .map((_, bIdx) => (bIdx < perBandOptions.length ? perBandOptions[bIdx]?.length ?? 0 : 0))
+      .filter((len) => len > 0);
+    const optCount = optionCounts.length > 0 ? Math.min(...optionCounts) : 0;
+
+    if (optCount === 0) {
+      resolvedCombos.push(combo);
+      continue;
+    }
+
+    for (let optIdx = 0; optIdx < optCount; optIdx++) {
+      const clonedBands = combo.bands.map((bp) => ({ ...bp }));
+      let dlCc = 0;
+      let ulCc = 0;
+
+      for (let bIdx = 0; bIdx < clonedBands.length; bIdx++) {
+        const bp = clonedBands[bIdx];
+        const isFr2 = bp.ratType === 'nr' && bp.band >= 257;
+        let bandDlCc = bp.bandwidthClassDL ? getBwClassCcCount(bp.bandwidthClassDL, bp.ratType, isFr2) : 0;
+        let bandUlCc = bp.bandwidthClassUL ? getBwClassCcCount(bp.bandwidthClassUL, bp.ratType, isFr2) : 0;
+
+        const opt = bIdx < perBandOptions.length ? perBandOptions[bIdx]?.[optIdx] : undefined;
+        if (opt) {
+          if (opt.ul === 0) {
+            bp.bandwidthClassUL = undefined;
+            bandUlCc = 0;
+          }
+          if (opt.dl === 0 && opt.ul !== 0) {
+            bp.bandwidthClassDL = undefined;
+            bandDlCc = 0;
+          }
+          if (bp.ratType === 'nr' && nrMap) {
+            if (opt.dl && opt.dl > 0) {
+              const dlFs = nrMap.get(opt.dl);
+              if (dlFs) {
+                applyNrFeatureSetToBandParam(bp, dlFs, Boolean(bp.bandwidthClassDL), false);
+                if (bp.bandwidthClassDL && dlFs.dl?.ccCount !== undefined) {
+                  bandDlCc = dlFs.dl.ccCount;
+                }
+              }
+            }
+            if (opt.ul && opt.ul > 0) {
+              const ulFs = nrMap.get(opt.ul);
+              if (ulFs) {
+                applyNrFeatureSetToBandParam(bp, ulFs, false, Boolean(bp.bandwidthClassUL));
+                if (bp.bandwidthClassUL && ulFs.ul?.ccCount !== undefined) {
+                  bandUlCc = ulFs.ul.ccCount;
+                }
+              }
+            }
+          } else if (bp.ratType === 'eutra' && eutraMap) {
+            if (opt.dl && opt.dl > 0) {
+              const dlFs = eutraMap.get(opt.dl);
+              if (dlFs) applyEutraFeatureSetToBandParam(bp, dlFs, Boolean(bp.bandwidthClassDL), false);
+            }
+            if (opt.ul && opt.ul > 0) {
+              const ulFs = eutraMap.get(opt.ul);
+              if (ulFs) applyEutraFeatureSetToBandParam(bp, ulFs, false, Boolean(bp.bandwidthClassUL));
+            }
+          }
+        }
+
+        dlCc += bandDlCc;
+        ulCc += bandUlCc;
+      }
+
+      resolvedCombos.push({
+        ...combo,
+        bands: clonedBands,
+        featureSetIndex: optIdx,
+        dlCc,
+        ulCc,
+      });
+    }
   }
 
   // Recompute NRBandInfo max bandwidths now that extraBws/dlBandwidth may be populated
@@ -421,6 +485,8 @@ export function resolveBandCombinationsWithFeatureSets(
     if (maxDl) band.dlBandwidth = maxDl;
     if (maxUl) band.ulBandwidth = maxUl;
   }
+
+  return resolvedCombos;
 }
 
 function enrichNrBandFromFs(

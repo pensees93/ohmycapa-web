@@ -334,5 +334,44 @@ describe('Stage 2 Normalizer Unit Tests', () => {
       });
       expect(utra).toBeDefined();
     });
+
+    it('extracts NR v1540 extensions and does not mutate caller AST inputs', async () => {
+      const { extractNRRat } = await import('../src/normalizer/nrNormalizer');
+      const pdu: Asn1Record = {
+        'rf-Parameters': {
+          supportedBandListNR: [{ bandNR: 78 }],
+          supportedBandCombinationList: [
+            {
+              bandList: [{ nr: { bandNR: 78, 'ca-BandwidthClassDL-NR': 'a', 'ca-BandwidthClassUL-NR': 'a' } }],
+            },
+          ],
+          'supportedBandCombinationList-v1540': [
+            {
+              'bandList-v1540': [{ 'srs-TxSwitch': { 'supportedSRS-TxPortSwitch': 't1r4' } }],
+              'ca-ParametersNR-v1540': { 'simultaneousCSI-ReportsAllCC': 4 },
+            },
+          ],
+          'supportedBandCombinationList-v1780': [
+            {
+              'ca-ParametersNR-v1780': {
+                'supportedAggBW-FR1-r17': { 'supportedAggBW-TotalDL-r17': { 'fr1-r17': 'mhz200' } },
+              },
+            },
+          ],
+        },
+      };
+      const snapshot = JSON.stringify(pdu);
+      const { ratInfo } = extractNRRat(pdu);
+      expect(JSON.stringify(pdu)).toBe(snapshot);
+      expect(ratInfo.bandCombinations).toHaveLength(1);
+      expect(ratInfo.bandCombinations[0].bands[0].srsTxSwitch).toBe('t1r4');
+      expect(ratInfo.bandCombinations[0].caParametersNR?.simultaneousCSIReportsAllCC).toBe(4);
+      expect(ratInfo.bandCombinations[0].aggregatedBw?.totalDl).toBe('200MHz');
+
+      const feat = extractNRFeatures({
+        'mac-Parameters': { 'rel18-ArrayFlag': ['v1', 'v2'] },
+      });
+      expect(feat.leaves.find((l) => l.leaf === 'rel18-ArrayFlag')?.kind).toBe('stringList');
+    });
   });
 });

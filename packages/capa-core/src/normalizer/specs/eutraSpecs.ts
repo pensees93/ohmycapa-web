@@ -237,6 +237,14 @@ export const EUTRA_FEATURE_SPECS: FeatureSpec[] = [
   },
   {
     "major": "InterRAT",
+    "middle": "Irat-ParametersNR (V1570)",
+    "leaf": "ss-SINR-Meas-NR-FR1-r15",
+    "path": "irat-ParametersNR-v1570.ss-SINR-Meas-NR-FR1-r15",
+    "kind": "bool",
+    "description": "Auto-discovered 3GPP capability (irat-ParametersNR-v1570.ss-SINR-Meas-NR-FR1-r15)"
+  },
+  {
+    "major": "InterRAT",
     "middle": "NR (Rel-16)",
     "leaf": "extendedBand-n77-r16",
     "path": "irat-ParametersNR-v1660.extendedBand-n77-r16",

@@ -1,498 +1,136 @@
-import React, { useMemo, memo, useCallback, useEffect, useState } from 'react';
+import React, { useMemo, memo, useCallback, useDeferredValue, useEffect, useId, useRef, useState } from 'react';
 import {
-  Box, Paper, Tabs, Tab, Typography, Button, Divider, Collapse,
-  Chip, useTheme, CircularProgress, Tooltip, IconButton,
-  Menu, MenuItem, ListItemIcon, ListItemText,
+  Box, Paper, Tabs, Tab, Typography, Button, Collapse,
+  Chip, useTheme, CircularProgress,
   ToggleButtonGroup, ToggleButton,
+  Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle,
 } from '@mui/material';
-import DownloadIcon from '@mui/icons-material/Download';
-import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
-import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import DashboardOutlinedIcon from '@mui/icons-material/DashboardOutlined';
+import ManageSearchIcon from '@mui/icons-material/ManageSearch';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { CapaDropzone } from './components/CapaDropzone';
-import { CompareSummaryDashboard } from './components/CompareSummaryDashboard';
+import { CompareOverviewView } from './components/CompareOverviewView';
 import { BandCompareTable } from './components/BandCompareTable';
 import { ComboCompareView } from './components/ComboCompareView';
 import { FeaturesCompareView } from './components/FeaturesCompareView';
+import { GlobalCompareFeaturesView, GlobalSingleFeaturesView } from './components/GlobalFeatureSearchView';
 import { SingleDeviceView } from './components/SingleDeviceView';
+import { SpecIssueReportDialog } from './components/SpecIssueReportDialog';
+import { CompareTopBar, SingleTopBar } from './components/WorkbenchTopBar';
+import { GlobalFileDropOverlay } from './components/GlobalFileDropOverlay';
+import { EmptyCompareStage } from './components/EmptyCompareStage';
 import { useCapaCompare } from './hooks/useCapaCompare';
-import {
-  exportCapaCompareToExcelCompat,
-  exportCommonJsonCompat,
-  exportSingleDeviceToExcelCompat,
-} from './utils/tauriExportUtils';
 import { getTauriAdapter } from './utils/tauriAdapter';
-import { DEVICE_COLOR, STATUS_COLOR } from './constants/statusMeta';
-import type { RatType, ComboDisplayOptions, CapaCompareResult, RatCompareResult, CompareFormat } from '@ohmycapa/capa-core';
+import { isValidCapaFileName } from './utils/fileDropUtils';
+import {
+  computeCrossRatMetrics,
+  resolveKpiDrillDown,
+  type DetailSection,
+  type DrillDownTarget,
+  type KpiKind,
+} from './utils/compareMetrics';
+import {
+  buildGlobalCompareFeatureIndex,
+  buildGlobalSingleFeatureIndex,
+  filterGlobalCompareFeatures,
+  filterGlobalSingleFeatures,
+  getFeatureRowKey,
+  type GlobalFeatureStatusFilter,
+} from './utils/featureSearch';
+import {
+  MONO_FONT_FAMILY,
+  RAT_TABS,
+  STATUS_COLOR,
+  getWorkbenchSurface,
+} from './constants/statusMeta';
+import { buildUnclassifiedSpecIssueReport } from '@ohmycapa/capa-core';
+import type {
+  RatType,
+  ComboDisplayOptions,
+  CapaCompareResult,
+  RatCompareResult,
+  CompareFormat,
+  FeatureDiff,
+  FeatureLeaf,
+  UnclassifiedSpecIssueReport,
+} from '@ohmycapa/capa-core';
 
 // ─── Constants & Types ──────────────────────────────────────────────────────
 
-const RAT_TABS: { value: RatType; label: string }[] = [
-  { value: 'nr', label: 'NR (5G)' },
-  { value: 'eutra', label: 'EUTRA (LTE)' },
-  { value: 'eutra-nr', label: 'EUTRA-NR (MRDC)' },
-  { value: 'utra', label: 'UTRA (3G)' },
-];
+type CompareViewMode = 'rat' | 'overview' | 'global-features';
+type SingleViewMode = 'rat' | 'global-features';
 
-type DetailSection = 'combos' | 'bands' | 'features';
+const REPORT_NOTICE_KEY = 'ohmycapa:unclassified-report-notice-seen';
+let reportNoticeShown = false;
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-/**
- * Unified Export dropdown consolidating Compare Excel and A/B single exports.
- */
-const ExportMenu = memo<{
-  deviceA: any;
-  deviceB: any;
-  compareResult: CapaCompareResult | null;
-}>(({ deviceA, deviceB, compareResult }) => {
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-  const open = Boolean(anchorEl);
-  const close = () => setAnchorEl(null);
-
-  return (
-    <>
-      <Button
-        size="small"
-        variant="contained"
-        disableElevation
-        startIcon={<DownloadIcon sx={{ fontSize: 14 }} />}
-        endIcon={<KeyboardArrowDownIcon sx={{ fontSize: 14 }} />}
-        onClick={e => setAnchorEl(e.currentTarget)}
-        sx={{ fontSize: '0.7rem', py: 0.3, px: 1.1, textTransform: 'none', borderRadius: 1.5, minHeight: 26 }}
-      >
-        Export
-      </Button>
-      <Menu
-        anchorEl={anchorEl}
-        open={open}
-        onClose={close}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-        slotProps={{ paper: { sx: { minWidth: 190, mt: 0.5 } } }}
-      >
-        {compareResult && (
-          <MenuItem
-            dense
-            onClick={() => {
-              close();
-              void exportCapaCompareToExcelCompat(compareResult);
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 26 }}>
-              <DownloadIcon sx={{ fontSize: 15, color: 'primary.main' }} />
-            </ListItemIcon>
-            <ListItemText primary="Export Compare Excel" slotProps={{ primary: { sx: { fontSize: '0.75rem', fontWeight: 600 } } }} />
-          </MenuItem>
-        )}
-        {compareResult && (deviceA.normalized || deviceB.normalized) && <Divider sx={{ my: 0.5 }} />}
-        {deviceA.normalized && (
-          <MenuItem
-            dense
-            onClick={() => {
-              close();
-              void exportSingleDeviceToExcelCompat(deviceA.normalized!, 'A');
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 26 }}>
-              <DownloadIcon sx={{ fontSize: 15, color: DEVICE_COLOR.deviceA }} />
-            </ListItemIcon>
-            <ListItemText primary="Device A Excel" slotProps={{ primary: { sx: { fontSize: '0.74rem' } } }} />
-          </MenuItem>
-        )}
-        {deviceA.normalized && (
-          <MenuItem
-            dense
-            onClick={() => {
-              close();
-              void exportCommonJsonCompat(deviceA.normalized!, 'A');
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 26 }}>
-              <DownloadIcon sx={{ fontSize: 15, color: DEVICE_COLOR.deviceA }} />
-            </ListItemIcon>
-            <ListItemText primary="Device A JSON" slotProps={{ primary: { sx: { fontSize: '0.74rem' } } }} />
-          </MenuItem>
-        )}
-        {deviceB.normalized && (
-          <MenuItem
-            dense
-            onClick={() => {
-              close();
-              void exportSingleDeviceToExcelCompat(deviceB.normalized!, 'B');
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 26 }}>
-              <DownloadIcon sx={{ fontSize: 15, color: DEVICE_COLOR.deviceB }} />
-            </ListItemIcon>
-            <ListItemText primary="Device B Excel" slotProps={{ primary: { sx: { fontSize: '0.74rem' } } }} />
-          </MenuItem>
-        )}
-        {deviceB.normalized && (
-          <MenuItem
-            dense
-            onClick={() => {
-              close();
-              void exportCommonJsonCompat(deviceB.normalized!, 'B');
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 26 }}>
-              <DownloadIcon sx={{ fontSize: 15, color: DEVICE_COLOR.deviceB }} />
-            </ListItemIcon>
-            <ListItemText primary="Device B JSON" slotProps={{ primary: { sx: { fontSize: '0.74rem' } } }} />
-          </MenuItem>
-        )}
-      </Menu>
-    </>
-  );
-});
-
-/**
- * Compact 1-line compare header shown once comparison results are ready.
- * Keeps ~85%+ of vertical space focused on combo/band/feature diffs.
- */
-const CompactCompareHeader = memo<{
-  deviceA: any;
-  deviceB: any;
-  compareResult: CapaCompareResult;
-  isProcessing: boolean;
-  isComparing: boolean;
-  isExpanded: boolean;
-  onToggleExpand: () => void;
-  onSwap: () => void;
-}>(({ deviceA, deviceB, compareResult, isProcessing, isComparing, isExpanded, onToggleExpand, onSwap }) => {
-  const isDark = useTheme().palette.mode === 'dark';
-
-  const kpi = useMemo(() => {
-    let unique = 0;
-    let paramDiff = 0;
-    let covered = 0;
-    let bandDiff = 0;
-    let featureDiff = 0;
-
-    for (const s of Object.values(compareResult.summary.perRat)) {
-      if (!s) continue;
-      unique += s.combos.aOnlyUnique + s.combos.bOnlyUnique;
-      paramDiff += s.combos.exactChanged;
-      covered += s.combos.aOnlyCovered + s.combos.bOnlyCovered;
-      bandDiff += s.bands.changed + s.bands.aOnly + s.bands.bOnly;
-    }
-
-    if (compareResult.featuresDiff) {
-      for (const fd of Object.values(compareResult.featuresDiff)) {
-        if (!fd) continue;
-        featureDiff += fd.counts.different + fd.counts.aOnly + fd.counts.bOnly;
-      }
-    }
-
-    return { unique, paramDiff, covered, bandDiff, featureDiff };
-  }, [compareResult]);
-
-  const nameA = deviceA.deviceName || compareResult.meta.deviceA.fileName;
-  const nameB = deviceB.deviceName || compareResult.meta.deviceB.fileName;
-  const vendorA = compareResult.meta.deviceA.vendor;
-  const vendorB = compareResult.meta.deviceB.vendor;
-  const allIdentical =
-    kpi.unique === 0 && kpi.paramDiff === 0 && kpi.covered === 0 && kpi.bandDiff === 0 && kpi.featureDiff === 0;
-
-  return (
-    <Paper
-      elevation={0}
-      sx={{
-        px: 1.5,
-        py: 0.75,
-        border: '1px solid',
-        borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-        borderRadius: 2.5,
-        bgcolor: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.6)',
-        backdropFilter: 'blur(10px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 1.5,
-        flexWrap: 'wrap',
-      }}
-    >
-      {/* Left: Device A <-> B pills + Global Diff KPIs */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', minWidth: 0 }}>
-        {/* Device A Pill */}
-        <Tooltip title={nameA} placement="bottom">
-          <Box sx={{
-            display: 'flex', alignItems: 'center', gap: 0.6, px: 1, py: 0.3, borderRadius: 1.5,
-            border: '1px solid', borderColor: `${DEVICE_COLOR.deviceA}44`, bgcolor: `${DEVICE_COLOR.deviceA}0d`,
-          }}>
-            <Typography variant="caption" sx={{ fontWeight: 800, fontSize: '0.68rem', color: DEVICE_COLOR.deviceA }}>
-              A
-            </Typography>
-            <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.72rem', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {nameA}
-            </Typography>
-            {vendorA && vendorA !== 'UNKNOWN' && (
-              <Chip label={vendorA} size="small" sx={{ height: 15, fontSize: '0.58rem', fontWeight: 700 }} />
-            )}
-          </Box>
-        </Tooltip>
-
-        {/* Swap / Spinner */}
-        {isProcessing || isComparing ? (
-          <CircularProgress size={16} />
-        ) : (
-          <Tooltip title="Swap A ↔ B" placement="top">
-            <IconButton size="small" onClick={onSwap} sx={{ p: 0.4, color: 'primary.main' }}>
-              <SwapHorizIcon sx={{ fontSize: 18 }} />
-            </IconButton>
-          </Tooltip>
-        )}
-
-        {/* Device B Pill */}
-        <Tooltip title={nameB} placement="bottom">
-          <Box sx={{
-            display: 'flex', alignItems: 'center', gap: 0.6, px: 1, py: 0.3, borderRadius: 1.5,
-            border: '1px solid', borderColor: `${DEVICE_COLOR.deviceB}44`, bgcolor: `${DEVICE_COLOR.deviceB}0d`,
-          }}>
-            <Typography variant="caption" sx={{ fontWeight: 800, fontSize: '0.68rem', color: DEVICE_COLOR.deviceB }}>
-              B
-            </Typography>
-            <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.72rem', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {nameB}
-            </Typography>
-            {vendorB && vendorB !== 'UNKNOWN' && (
-              <Chip label={vendorB} size="small" sx={{ height: 15, fontSize: '0.58rem', fontWeight: 700 }} />
-            )}
-          </Box>
-        </Tooltip>
-
-        {/* Global Cross-RAT Diff KPI Badges */}
-        <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.3 }} />
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, flexWrap: 'wrap' }}>
-          {allIdentical ? (
-            <Chip
-              size="small"
-              label="100% Identical ✓"
-              sx={{ height: 18, fontSize: '0.62rem', fontWeight: 700, bgcolor: 'rgba(16,185,129,0.12)', color: STATUS_COLOR.green }}
-            />
-          ) : (
-            <>
-              {kpi.unique > 0 && (
-                <Chip
-                  size="small"
-                  label={`Unique ${kpi.unique}`}
-                  sx={{ height: 18, fontSize: '0.62rem', fontWeight: 700, bgcolor: 'rgba(239,68,68,0.12)', color: STATUS_COLOR.red }}
-                />
-              )}
-              {kpi.paramDiff > 0 && (
-                <Chip
-                  size="small"
-                  label={`Param ${kpi.paramDiff}`}
-                  sx={{ height: 18, fontSize: '0.62rem', fontWeight: 700, bgcolor: 'rgba(245,158,11,0.12)', color: STATUS_COLOR.amber }}
-                />
-              )}
-              {kpi.covered > 0 && (
-                <Chip
-                  size="small"
-                  label={`Covered ${kpi.covered}`}
-                  sx={{ height: 18, fontSize: '0.62rem', fontWeight: 700, bgcolor: 'rgba(99,102,241,0.12)', color: STATUS_COLOR.indigo }}
-                />
-              )}
-              {kpi.bandDiff > 0 && (
-                <Chip
-                  size="small"
-                  label={`Bands ${kpi.bandDiff}`}
-                  sx={{ height: 18, fontSize: '0.62rem', fontWeight: 600, bgcolor: 'rgba(245,158,11,0.1)', color: STATUS_COLOR.amber }}
-                />
-              )}
-              {kpi.featureDiff > 0 && (
-                <Chip
-                  size="small"
-                  label={`Features ${kpi.featureDiff}`}
-                  sx={{ height: 18, fontSize: '0.62rem', fontWeight: 600, bgcolor: 'rgba(245,158,11,0.1)', color: STATUS_COLOR.amber }}
-                />
-              )}
-            </>
-          )}
-        </Box>
-      </Box>
-
-      {/* Right: Expand/Collapse Files & Summary Drawer + Unified Export */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Button
-          size="small"
-          variant="outlined"
-          endIcon={isExpanded ? <ExpandLessIcon sx={{ fontSize: 15 }} /> : <ExpandMoreIcon sx={{ fontSize: 15 }} />}
-          onClick={onToggleExpand}
-          sx={{
-            fontSize: '0.7rem', py: 0.25, px: 1, textTransform: 'none',
-            borderRadius: 1.5, minHeight: 26, color: 'text.secondary', borderColor: 'divider',
-          }}
-        >
-          Files & Summary
-        </Button>
-        <ExportMenu deviceA={deviceA} deviceB={deviceB} compareResult={compareResult} />
-      </Box>
-    </Paper>
-  );
-});
-
-/**
- * Compact 1-line header shown in Single Device mode, mirroring CompactCompareHeader.
- */
-const CompactSingleHeader = memo<{
-  device: CompareFormat;
-  side: 'A' | 'B';
-  deviceA: any;
-  deviceB: any;
-  isProcessing: boolean;
-  isExpanded: boolean;
-  onToggleExpand: () => void;
-  onSwap: () => void;
-}>(({ device, side, deviceA, deviceB, isProcessing, isExpanded, onToggleExpand, onSwap }) => {
-  const isDark = useTheme().palette.mode === 'dark';
-  const sideColor = side === 'A' ? DEVICE_COLOR.deviceA : DEVICE_COLOR.deviceB;
-  const otherSide = side === 'A' ? 'B' : 'A';
-  const otherColor = otherSide === 'A' ? DEVICE_COLOR.deviceA : DEVICE_COLOR.deviceB;
-  const displayName = (side === 'A' ? deviceA.deviceName : deviceB.deviceName) || device.meta.deviceName || device.meta.fileName;
-  const vendor = device.meta.vendor;
-
-  return (
-    <Paper
-      elevation={0}
-      sx={{
-        px: 1.5,
-        py: 0.75,
-        border: '1px solid',
-        borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-        borderRadius: 2.5,
-        bgcolor: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.6)',
-        backdropFilter: 'blur(10px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 1.5,
-        flexWrap: 'wrap',
-      }}
-    >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', minWidth: 0 }}>
-        <Tooltip title={displayName} placement="bottom">
-          <Box sx={{
-            display: 'flex', alignItems: 'center', gap: 0.6, px: 1, py: 0.3, borderRadius: 1.5,
-            border: '1px solid', borderColor: `${sideColor}44`, bgcolor: `${sideColor}0d`,
-          }}>
-            <Typography variant="caption" sx={{ fontWeight: 800, fontSize: '0.68rem', color: sideColor }}>
-              {side}
-            </Typography>
-            <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.72rem', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {displayName}
-            </Typography>
-            {vendor && vendor !== 'UNKNOWN' && (
-              <Chip label={vendor} size="small" sx={{ height: 15, fontSize: '0.58rem', fontWeight: 700 }} />
-            )}
-          </Box>
-        </Tooltip>
-
-        {isProcessing ? (
-          <CircularProgress size={16} />
-        ) : (
-          <Tooltip title="Swap A ↔ B" placement="top">
-            <IconButton size="small" onClick={onSwap} sx={{ p: 0.4, color: 'text.secondary' }}>
-              <SwapHorizIcon sx={{ fontSize: 18 }} />
-            </IconButton>
-          </Tooltip>
-        )}
-
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={onToggleExpand}
-          sx={{
-            fontSize: '0.68rem',
-            py: 0.2,
-            px: 1,
-            textTransform: 'none',
-            borderRadius: 1.5,
-            minHeight: 24,
-            borderStyle: 'dashed',
-            borderColor: `${otherColor}66`,
-            color: otherColor,
-            '&:hover': { borderStyle: 'dashed', borderColor: otherColor, bgcolor: `${otherColor}0d` },
-          }}
-        >
-          + Add Device {otherSide} to Compare
-        </Button>
-
-        <Divider orientation="vertical" flexItem sx={{ mx: 0.25, my: 0.3 }} />
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-          {device.meta.detectedRats.map(r => (
-            <Chip
-              key={r}
-              label={r.toUpperCase()}
-              size="small"
-              sx={{ height: 17, fontSize: '0.58rem', fontWeight: 600, bgcolor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)' }}
-            />
-          ))}
-        </Box>
-      </Box>
-
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Button
-          size="small"
-          variant="outlined"
-          endIcon={isExpanded ? <ExpandLessIcon sx={{ fontSize: 15 }} /> : <ExpandMoreIcon sx={{ fontSize: 15 }} />}
-          onClick={onToggleExpand}
-          sx={{
-            fontSize: '0.7rem', py: 0.25, px: 1, textTransform: 'none',
-            borderRadius: 1.5, minHeight: 26, color: 'text.secondary', borderColor: 'divider',
-          }}
-        >
-          Files
-        </Button>
-        <ExportMenu deviceA={deviceA} deviceB={deviceB} compareResult={null} />
-      </Box>
-    </Paper>
-  );
-});
-
-/**
- * Detailed label for RAT tabs including diff badges.
- */
 const RatTabLabel = memo<{
   label: string;
   uniqueCount: number;
   featureDiffCount: number;
 }>(({ label, uniqueCount, featureDiffCount }) => (
   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-    {label}
+    <span>{label}</span>
     {uniqueCount > 0 && (
       <Chip
         label={uniqueCount}
         size="small"
-        sx={{ height: 16, fontSize: '0.65rem', fontWeight: 600, bgcolor: 'rgba(239,68,68,0.15)', color: STATUS_COLOR.red, ml: 0.5 }}
+        sx={{
+          height: 16,
+          fontSize: '0.62rem',
+          fontWeight: 700,
+          fontFamily: MONO_FONT_FAMILY,
+          bgcolor: 'rgba(239,68,68,0.14)',
+          color: STATUS_COLOR.red,
+          '& .MuiChip-label': { px: 0.55 },
+        }}
       />
     )}
     {featureDiffCount > 0 && (
       <Chip
         label={`F:${featureDiffCount}`}
         size="small"
-        sx={{ height: 16, fontSize: '0.65rem', fontWeight: 600, bgcolor: 'rgba(245,158,11,0.15)', color: STATUS_COLOR.amber, ml: 0.5 }}
+        sx={{
+          height: 16,
+          fontSize: '0.62rem',
+          fontWeight: 700,
+          fontFamily: MONO_FONT_FAMILY,
+          bgcolor: 'rgba(245,158,11,0.14)',
+          color: STATUS_COLOR.amber,
+          '& .MuiChip-label': { px: 0.55 },
+        }}
       />
     )}
   </Box>
 ));
 
-/**
- * Detailed view for a specific RAT's active sub-section (Combos / Bands / Features).
- */
 const RatDetailView = memo<{
   ratType: RatType;
   activeSection: DetailSection;
-  ratResult: RatCompareResult;
+  ratResult?: RatCompareResult;
   compareResult: CapaCompareResult;
+  deviceAName: string;
+  deviceBName: string;
   comboOptions: ComboDisplayOptions;
+  drillDownTarget: DrillDownTarget | null;
   onOpenUrl?: (url: string) => void;
-}>(({ ratType, activeSection, ratResult, compareResult, comboOptions, onOpenUrl }) => {
+}>(({
+  ratType,
+  activeSection,
+  ratResult,
+  compareResult,
+  deviceAName,
+  deviceBName,
+  comboOptions,
+  drillDownTarget,
+  onOpenUrl,
+}) => {
   const featureDiff = compareResult.featuresDiff?.[ratType];
-  const hasData = ratResult.bandDiffs.length > 0 || ratResult.comboDiffs.length > 0 || !!featureDiff;
+  const hasData =
+    (ratResult?.bandDiffs.length ?? 0) > 0 ||
+    (ratResult?.comboDiffs.length ?? 0) > 0 ||
+    (featureDiff?.diffs.length ?? 0) > 0;
 
   if (!hasData) {
     return (
@@ -502,25 +140,33 @@ const RatDetailView = memo<{
     );
   }
 
+  const targetForRat = drillDownTarget?.rat === ratType ? drillDownTarget : null;
+
   return (
     <Box sx={{ p: 1.5, flex: 1, minHeight: 0, overflowY: 'auto' }}>
-      {activeSection === 'combos' && (
+      {activeSection === 'combos' && ratResult && (
         <ComboCompareView
           key={`combos-${ratType}`}
           comboDiffs={ratResult.comboDiffs}
           coverage={ratResult.coverage}
-          deviceAName={compareResult.meta.deviceA.fileName}
-          deviceBName={compareResult.meta.deviceB.fileName}
+          deviceAName={deviceAName}
+          deviceBName={deviceBName}
           displayOptions={comboOptions}
           ratType={ratType}
+          initialFilter={targetForRat?.section === 'combos' ? targetForRat.comboFilter : undefined}
+          filterVersion={targetForRat?.section === 'combos' ? targetForRat.version : undefined}
         />
       )}
 
-      {activeSection === 'bands' && (
+      {activeSection === 'bands' && ratResult && (
         <BandCompareTable
           key={`bands-${ratType}`}
           bandDiffs={ratResult.bandDiffs}
           ratType={ratType}
+          deviceAName={deviceAName}
+          deviceBName={deviceBName}
+          initialFilter={targetForRat?.section === 'bands' ? targetForRat.bandFilter : undefined}
+          filterVersion={targetForRat?.section === 'bands' ? targetForRat.version : undefined}
         />
       )}
 
@@ -528,33 +174,274 @@ const RatDetailView = memo<{
         <FeaturesCompareView
           key={`features-${ratType}`}
           featuresDiff={featureDiff}
-          deviceAName={compareResult.meta.deviceA.fileName}
-          deviceBName={compareResult.meta.deviceB.fileName}
+          deviceAName={deviceAName}
+          deviceBName={deviceBName}
           ratType={ratType}
           onOpenUrl={onOpenUrl}
+          initialFilter={targetForRat?.section === 'features' ? targetForRat.featureFilter : undefined}
+          initialMajor={targetForRat?.section === 'features' ? targetForRat.featureMajor : undefined}
+          highlightFeatureId={targetForRat?.section === 'features' ? targetForRat.highlightFeatureId : undefined}
+          navigationVersion={targetForRat?.section === 'features' ? targetForRat.version : undefined}
         />
       )}
     </Box>
   );
 });
 
-/**
- * Tab panel showing RAT tabs (left), Sub-section selector (right), and active diff view.
- */
-const ComparisonPanel = memo<{
-  compareResult: CapaCompareResult;
-  availableRats: { value: RatType; label: string; uniqueCount: number; featureDiffCount: number }[];
-  activeRatValue: RatType | undefined;
-  comboOptions: ComboDisplayOptions;
-  onRatChange: (rat: RatType) => void;
-  onOpenUrl?: (url: string) => void;
-}>(({ compareResult, availableRats, activeRatValue, comboOptions, onRatChange, onOpenUrl }) => {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === 'dark';
-  const [sectionByRat, setSectionByRat] = useState<Partial<Record<RatType, DetailSection>>>({});
+// ─── Main Component ──────────────────────────────────────────────────────────
 
-  const activeRatResult = activeRatValue ? compareResult.ratResults[activeRatValue] : undefined;
-  const activeFeatureDiff = activeRatValue ? compareResult.featuresDiff?.[activeRatValue] : undefined;
+export interface CapaComparePageProps {
+  onOpenUrl?: (url: string) => void;
+  emptyStateExtra?: React.ReactNode;
+}
+
+const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyStateExtra }) => {
+  const isDark = useTheme().palette.mode === 'dark';
+  const surface = getWorkbenchSurface(isDark);
+
+  const {
+    deviceA,
+    deviceB,
+    compareResult,
+    activeRat,
+    isComparing,
+    comboOptions,
+    setActiveRat,
+    addFiles,
+    removeFile,
+    setDeviceName,
+    clearDevice,
+    swapDevices,
+  } = useCapaCompare();
+
+  // Workspace view states
+  const [isFilesDrawerOpen, setIsFilesDrawerOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<CompareViewMode>('rat');
+  const [singleViewMode, setSingleViewMode] = useState<SingleViewMode>('rat');
+  const previousCompareViewRef = useRef<'rat' | 'overview'>('rat');
+  const [sectionByRat, setSectionByRat] = useState<Partial<Record<RatType, DetailSection>>>({});
+  const [drillDownTarget, setDrillDownTarget] = useState<DrillDownTarget | null>(null);
+  const [singleJumpTarget, setSingleJumpTarget] = useState<{ rat: RatType; featureId: string; version: number } | null>(null);
+  const navVersionRef = useRef(0);
+
+  // Global feature search states
+  const [globalFeatureQuery, setGlobalFeatureQuery] = useState('');
+  const [globalFeatureStatus, setGlobalFeatureStatus] = useState<GlobalFeatureStatusFilter | undefined>(undefined);
+  const [globalFeatureStatusVersion, setGlobalFeatureStatusVersion] = useState<number | undefined>(undefined);
+  const globalSearchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Unclassified spec notice / GitHub report dialog
+  const [reportNotice, setReportNotice] = useState<UnclassifiedSpecIssueReport | null>(null);
+  const [editingReport, setEditingReport] = useState<UnclassifiedSpecIssueReport | null>(null);
+  const reportTitleId = useId();
+  const reportDescriptionId = useId();
+
+  // Browser/Electron global drag overlay state
+  const [isDragOverlayOpen, setIsDragOverlayOpen] = useState(false);
+  const dragDepthRef = useRef(0);
+
+  const isProcessing = deviceA.isProcessing || deviceB.isProcessing;
+  const hasResult = Boolean(compareResult);
+
+  // Raw logs have parsed ASTs. Samples and restored snapshots only have normalized JSON.
+  const analyzedA = deviceA.files.some(file => file.status === 'done' && file.ast) ? deviceA.normalized : null;
+  const analyzedB = deviceB.files.some(file => file.status === 'done' && file.ast) ? deviceB.normalized : null;
+
+  useEffect(() => {
+    if (reportNoticeShown || isProcessing || (!analyzedA && !analyzedB)) return;
+    try {
+      if (window.localStorage.getItem(REPORT_NOTICE_KEY) === 'true') return;
+    } catch {
+      // Ignore storage access errors in restricted web contexts
+    }
+
+    const report = buildUnclassifiedSpecIssueReport([analyzedA, analyzedB]);
+    if (report.totalCount === 0) return;
+    reportNoticeShown = true;
+    setReportNotice(report);
+    try {
+      window.localStorage.setItem(REPORT_NOTICE_KEY, 'true');
+    } catch {
+      // In-memory flag still covers this session
+    }
+  }, [analyzedA, analyzedB, isProcessing]);
+
+  const closeReportNotice = () => setReportNotice(null);
+
+  const editIssueReport = () => {
+    setEditingReport(reportNotice);
+    closeReportNotice();
+  };
+
+  const handleFilesDrop = useCallback(async (side: 'a' | 'b', files: File[]) => {
+    const { hasError } = await addFiles(side, files);
+    if (!hasError) setIsFilesDrawerOpen(false);
+  }, [addFiles]);
+
+  const handleClearDevice = useCallback((side: 'a' | 'b') => {
+    clearDevice(side);
+    setIsFilesDrawerOpen(false);
+  }, [clearDevice]);
+
+  const handleReset = useCallback(() => {
+    clearDevice('a');
+    clearDevice('b');
+    setActiveRat('nr');
+    setViewMode('rat');
+    setSingleViewMode('rat');
+    previousCompareViewRef.current = 'rat';
+    setSectionByRat({});
+    setDrillDownTarget(null);
+    setSingleJumpTarget(null);
+    setGlobalFeatureQuery('');
+    setGlobalFeatureStatus(undefined);
+    setIsFilesDrawerOpen(false);
+  }, [clearDevice, setActiveRat]);
+
+  // Browser / Electron drag-and-drop overlay handlers (disabled in Tauri v2)
+  const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+  const hasDraggedFiles = (e: React.DragEvent): boolean =>
+    Boolean(e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes('Files'));
+
+  // Derived single-device state
+  const singleDeviceInfo = useMemo<{ device: CompareFormat; side: 'A' | 'B' } | null>(() => {
+    if (hasResult || isProcessing || isComparing) return null;
+    if (deviceA.normalized) return { device: deviceA.normalized, side: 'A' };
+    if (deviceB.normalized) return { device: deviceB.normalized, side: 'B' };
+    return null;
+  }, [hasResult, isProcessing, isComparing, deviceA.normalized, deviceB.normalized]);
+
+  const canUseGlobalDropOverlay = !isTauriEnv && (hasResult || Boolean(singleDeviceInfo)) && !isFilesDrawerOpen;
+
+  const handleRootDragEnter = useCallback((e: React.DragEvent) => {
+    if (!canUseGlobalDropOverlay || !hasDraggedFiles(e)) return;
+    e.preventDefault();
+    dragDepthRef.current += 1;
+    setIsDragOverlayOpen(true);
+  }, [canUseGlobalDropOverlay]);
+
+  const handleRootDragOver = useCallback((e: React.DragEvent) => {
+    if (!canUseGlobalDropOverlay || !hasDraggedFiles(e)) return;
+    e.preventDefault();
+  }, [canUseGlobalDropOverlay]);
+
+  const handleRootDragLeave = useCallback((e: React.DragEvent) => {
+    if (!canUseGlobalDropOverlay) return;
+    if (dragDepthRef.current > 0) {
+      dragDepthRef.current -= 1;
+    }
+    if (dragDepthRef.current === 0 || !e.relatedTarget) {
+      dragDepthRef.current = 0;
+      setIsDragOverlayOpen(false);
+    }
+  }, [canUseGlobalDropOverlay]);
+
+  const handleRootDrop = useCallback(() => {
+    dragDepthRef.current = 0;
+    setIsDragOverlayOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isDragOverlayOpen) return;
+    const resetDrag = () => {
+      dragDepthRef.current = 0;
+      setIsDragOverlayOpen(false);
+    };
+    window.addEventListener('dragend', resetDrag);
+    window.addEventListener('drop', resetDrag);
+    return () => {
+      window.removeEventListener('dragend', resetDrag);
+      window.removeEventListener('drop', resetDrag);
+    };
+  }, [isDragOverlayOpen]);
+
+  // Tauri v2 OS-level drag-and-drop
+  useEffect(() => {
+    const tauriAdapter = getTauriAdapter();
+    if (!tauriAdapter) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      unlisten = await tauriAdapter.onDragDrop(async (paths, x) => {
+        const validPaths = paths.filter(isValidCapaFileName);
+        if (validPaths.length === 0) return;
+        const files = await Promise.all(
+          validPaths.map(async p => {
+            const text = await tauriAdapter.readTextFile(p);
+            return new File([text], p.split(/[\\/]/).pop() ?? p, { type: 'text/plain' });
+          })
+        );
+        const physicalHalf = (window.innerWidth * (window.devicePixelRatio || 1)) / 2;
+        const { hasError } = await addFiles(x > physicalHalf ? 'b' : 'a', files);
+        if (!hasError) setIsFilesDrawerOpen(false);
+      });
+      if (cancelled) {
+        unlisten();
+        unlisten = undefined;
+      }
+    })().catch(console.error);
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [addFiles]);
+
+  // Cross-RAT metrics for Overview, KPIs, and Tabs
+  const crossRatMetrics = useMemo(
+    () => (compareResult ? computeCrossRatMetrics(compareResult) : null),
+    [compareResult]
+  );
+
+  // Memoized cross-RAT feature indexes (rebuilt only when compareResult / singleDevice changes)
+  const globalCompareIndex = useMemo(
+    () => (compareResult ? buildGlobalCompareFeatureIndex(compareResult) : undefined),
+    [compareResult]
+  );
+  const globalSingleIndex = useMemo(
+    () => (singleDeviceInfo ? buildGlobalSingleFeatureIndex(singleDeviceInfo.device) : undefined),
+    [singleDeviceInfo]
+  );
+
+  const deferredGlobalQuery = useDeferredValue(globalFeatureQuery);
+
+  // Global search live count badge for top bar
+  const globalMatchCount = useMemo(() => {
+    const trimmed = deferredGlobalQuery.trim();
+    if (!trimmed) return undefined;
+    if (globalCompareIndex) {
+      return filterGlobalCompareFeatures(globalCompareIndex, { query: trimmed, status: 'all', rats: null }).totalMatchingQuery;
+    }
+    if (globalSingleIndex) {
+      return filterGlobalSingleFeatures(globalSingleIndex, { query: trimmed, rats: null }).totalMatchingQuery;
+    }
+    return undefined;
+  }, [deferredGlobalQuery, globalCompareIndex, globalSingleIndex]);
+
+  const availableRats = useMemo(() => {
+    if (!compareResult) return [];
+    return RAT_TABS
+      .filter(t => Boolean(compareResult.ratResults[t.value]) || (compareResult.featuresDiff?.[t.value]?.diffs.length ?? 0) > 0)
+      .map(t => {
+        const ratResult = compareResult.ratResults[t.value];
+        const featuresDiff = compareResult.featuresDiff?.[t.value];
+        const uniqueCount = ratResult
+          ? ratResult.comboDiffs.filter(d => d.status === 'a-only-unique' || d.status === 'b-only-unique').length
+          : 0;
+        const featureDiffCount = featuresDiff
+          ? featuresDiff.counts.different + featuresDiff.counts.aOnly + featuresDiff.counts.bOnly
+          : 0;
+        return { ...t, uniqueCount, featureDiffCount };
+      });
+  }, [compareResult]);
+
+  const activeRatValue = useMemo(
+    () => availableRats.find(t => t.value === activeRat)?.value ?? availableRats[0]?.value,
+    [availableRats, activeRat]
+  );
+
+  const activeRatResult = activeRatValue ? compareResult?.ratResults[activeRatValue] : undefined;
+  const activeFeatureDiff = activeRatValue ? compareResult?.featuresDiff?.[activeRatValue] : undefined;
 
   const sectionMeta = useMemo(() => {
     const comboTotal = activeRatResult?.comboDiffs.length ?? 0;
@@ -588,379 +475,627 @@ const ComparisonPanel = memo<{
     setSectionByRat(prev => ({ ...prev, [activeRatValue]: next }));
   }, [activeRatValue]);
 
-  return (
+  const handleGlobalQueryChange = useCallback((nextQuery: string) => {
+    setGlobalFeatureQuery(nextQuery);
+    if (nextQuery.trim()) {
+      if (compareResult) {
+        if (viewMode !== 'global-features') {
+          previousCompareViewRef.current = viewMode;
+        }
+        setViewMode('global-features');
+      } else if (singleDeviceInfo) {
+        setSingleViewMode('global-features');
+      }
+    }
+  }, [compareResult, singleDeviceInfo, viewMode]);
+
+  const handleOpenGlobalFeatures = useCallback((status?: GlobalFeatureStatusFilter) => {
+    if (viewMode !== 'global-features') {
+      previousCompareViewRef.current = viewMode;
+    }
+    if (status) {
+      setGlobalFeatureQuery('');
+      setGlobalFeatureStatus(status);
+      setGlobalFeatureStatusVersion(v => (v ?? 0) + 1);
+    }
+    setViewMode('global-features');
+  }, [viewMode]);
+
+  const handleDrillDown = useCallback((target: Omit<DrillDownTarget, 'version'>) => {
+    navVersionRef.current += 1;
+    setActiveRat(target.rat);
+    setSectionByRat(prev => ({ ...prev, [target.rat]: target.section }));
+    setDrillDownTarget({ ...target, version: navVersionRef.current });
+    previousCompareViewRef.current = 'rat';
+    setViewMode('rat');
+  }, [setActiveRat]);
+
+  const handleKpiClick = useCallback((kind: KpiKind) => {
+    if (!crossRatMetrics) return;
+    const res = resolveKpiDrillDown(crossRatMetrics, kind);
+    if (!res) return;
+    if (res.kind === 'global-features') {
+      handleOpenGlobalFeatures(res.featureFilter);
+      return;
+    }
+    handleDrillDown({
+      rat: res.rat,
+      section: res.section,
+      comboFilter: res.comboFilter,
+      bandFilter: res.bandFilter,
+      featureFilter: res.featureFilter,
+    });
+  }, [crossRatMetrics, handleDrillDown, handleOpenGlobalFeatures]);
+
+  const handleJumpFromGlobalCompare = useCallback((rat: RatType, diff: FeatureDiff) => {
+    handleDrillDown({
+      rat,
+      section: 'features',
+      featureFilter: diff.status === 'same' ? 'all' : 'diff',
+      featureMajor: null,
+      highlightFeatureId: getFeatureRowKey(diff.major, diff.middle, diff.leaf),
+    });
+  }, [handleDrillDown]);
+
+  const handleJumpFromGlobalSingle = useCallback((rat: RatType, leaf: FeatureLeaf) => {
+    navVersionRef.current += 1;
+    setSingleJumpTarget({
+      rat,
+      featureId: getFeatureRowKey(leaf.major, leaf.middle, leaf.leaf),
+      version: navVersionRef.current,
+    });
+    setSingleViewMode('rat');
+  }, []);
+
+  // Global keyboard shortcuts: Ctrl/Cmd+K, '/', and Escape
+  useEffect(() => {
+    const isDialogOpen = reportNotice !== null || editingReport !== null;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isDialogOpen) return;
+      const active = document.activeElement as HTMLElement | null;
+      const isInlineEditing = active?.dataset?.inlineEditing === 'true';
+
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
+        if (!compareResult && !singleDeviceInfo) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        globalSearchInputRef.current?.focus();
+        globalSearchInputRef.current?.select();
+        return;
+      }
+
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (!compareResult && !singleDeviceInfo) return;
+        const tag = active?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || active?.isContentEditable) return;
+        e.preventDefault();
+        e.stopPropagation();
+        globalSearchInputRef.current?.focus();
+        return;
+      }
+
+      if (e.key === 'Escape' && !isInlineEditing) {
+        if (compareResult && (viewMode === 'global-features' || globalFeatureQuery.trim())) {
+          e.preventDefault();
+          e.stopPropagation();
+          setGlobalFeatureQuery('');
+          setViewMode(previousCompareViewRef.current);
+          globalSearchInputRef.current?.blur();
+        } else if (singleDeviceInfo && (singleViewMode === 'global-features' || globalFeatureQuery.trim())) {
+          e.preventDefault();
+          e.stopPropagation();
+          setGlobalFeatureQuery('');
+          setSingleViewMode('rat');
+          globalSearchInputRef.current?.blur();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [reportNotice, editingReport, compareResult, singleDeviceInfo, viewMode, singleViewMode, globalFeatureQuery]);
+
+  const deviceAName = deviceA.deviceName || compareResult?.meta.deviceA.fileName || 'Device A';
+  const deviceBName = deviceB.deviceName || compareResult?.meta.deviceB.fileName || 'Device B';
+
+  const filesDrawerDropzone = (
     <Paper
       elevation={0}
       sx={{
-        border: '1px solid', borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', borderRadius: 3,
-        overflow: 'hidden',
-        bgcolor: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.6)',
-        backdropFilter: 'blur(10px)',
-        boxShadow: '0 4px 24px rgba(0,0,0,0.02)',
-        flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
+        p: 1.5,
+        border: '1px solid',
+        borderColor: surface.border,
+        borderRadius: 2,
+        bgcolor: surface.panelBg,
       }}
     >
-      {/* Unified Header Row: RAT Tabs (Left) + Sub-Tab Segmented Switch (Right) */}
-      <Box sx={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        borderBottom: '1px solid', borderColor: 'divider', px: 1, py: 0.25, gap: 1, flexWrap: 'wrap',
-      }}>
-        <Tabs
-          value={activeRatValue ?? false}
-          onChange={(_, v) => onRatChange(v as RatType)}
-          sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, py: 0, fontSize: '0.75rem', textTransform: 'none' } }}
-        >
-          {availableRats.map(({ value, label, uniqueCount, featureDiffCount }) => (
-            <Tab key={value} value={value} label={<RatTabLabel label={label} uniqueCount={uniqueCount} featureDiffCount={featureDiffCount} />} />
-          ))}
-        </Tabs>
-
-        {activeRatResult && (
-          <ToggleButtonGroup
-            size="small"
-            exclusive
-            value={activeSection}
-            onChange={handleSectionChange}
-            sx={{
-              '& .MuiToggleButton-root': {
-                py: 0.25, px: 1, fontSize: '0.68rem', fontWeight: 600,
-                textTransform: 'none', minHeight: 26, gap: 0.5,
-              },
-            }}
-          >
-            {sectionMeta.combos.available && (
-              <ToggleButton value="combos">
-                <span>Combos</span>
-                <Chip
-                  size="small"
-                  label={sectionMeta.combos.diff > 0 ? `${sectionMeta.combos.diff}/${sectionMeta.combos.total}` : `${sectionMeta.combos.total}`}
-                  sx={{
-                    height: 15, fontSize: '0.58rem', fontWeight: 700,
-                    bgcolor: sectionMeta.combos.diff > 0 ? 'rgba(239,68,68,0.14)' : 'rgba(16,185,129,0.12)',
-                    color: sectionMeta.combos.diff > 0 ? STATUS_COLOR.red : STATUS_COLOR.green,
-                  }}
-                />
-              </ToggleButton>
-            )}
-            {sectionMeta.bands.available && (
-              <ToggleButton value="bands">
-                <span>Bands</span>
-                <Chip
-                  size="small"
-                  label={sectionMeta.bands.diff > 0 ? `${sectionMeta.bands.diff}` : `${sectionMeta.bands.total}`}
-                  sx={{
-                    height: 15, fontSize: '0.58rem', fontWeight: 700,
-                    bgcolor: sectionMeta.bands.diff > 0 ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.12)',
-                    color: sectionMeta.bands.diff > 0 ? STATUS_COLOR.amber : STATUS_COLOR.green,
-                  }}
-                />
-              </ToggleButton>
-            )}
-            {sectionMeta.features.available && (
-              <ToggleButton value="features">
-                <span>Features</span>
-                <Chip
-                  size="small"
-                  label={sectionMeta.features.diff > 0 ? `${sectionMeta.features.diff}` : `${sectionMeta.features.total}`}
-                  sx={{
-                    height: 15, fontSize: '0.58rem', fontWeight: 700,
-                    bgcolor: sectionMeta.features.diff > 0 ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.12)',
-                    color: sectionMeta.features.diff > 0 ? STATUS_COLOR.amber : STATUS_COLOR.green,
-                  }}
-                />
-              </ToggleButton>
-            )}
-          </ToggleButtonGroup>
-        )}
-      </Box>
-
-      {availableRats.length > 0 && activeRatValue && activeRatResult ? (
-        <Box key={activeRatValue} sx={{ flexDirection: 'column', flex: 1, minHeight: 0, display: 'flex' }}>
-          <RatDetailView
-            ratType={activeRatValue}
-            activeSection={activeSection}
-            ratResult={activeRatResult}
-            compareResult={compareResult}
-            comboOptions={comboOptions}
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
+          gap: 1.5,
+          alignItems: 'stretch',
+        }}
+      >
+        <Box sx={{ p: 1.25, borderRadius: 1.5, border: '1px solid', borderColor: surface.laneABorder, bgcolor: surface.laneABg }}>
+          <CapaDropzone
+            side="A"
+            device={deviceA}
+            compact
+            onFilesDrop={files => { void handleFilesDrop('a', files); }}
+            onRemoveFile={name => removeFile('a', name)}
+            onClear={() => handleClearDevice('a')}
             onOpenUrl={onOpenUrl}
           />
         </Box>
-      ) : (
-        <Box sx={{ py: 4, textAlign: 'center', color: 'text.disabled' }}>
-          <Typography variant="body2">No RAT data available</Typography>
+        <Box sx={{ p: 1.25, borderRadius: 1.5, border: '1px solid', borderColor: surface.laneBBorder, bgcolor: surface.laneBBg }}>
+          <CapaDropzone
+            side="B"
+            device={deviceB}
+            compact
+            onFilesDrop={files => { void handleFilesDrop('b', files); }}
+            onRemoveFile={name => removeFile('b', name)}
+            onClear={() => handleClearDevice('b')}
+            onOpenUrl={onOpenUrl}
+          />
         </Box>
-      )}
-    </Paper>
-  );
-});
-
-// ─── Main Component ──────────────────────────────────────────────────────────
-
-export interface CapaComparePageProps {
-  onOpenUrl?: (url: string) => void;
-  emptyStateExtra?: React.ReactNode;
-}
-
-const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyStateExtra }) => {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === 'dark';
-
-  const {
-    deviceA, deviceB,
-    compareResult, activeRat, isComparing, setActiveRat,
-    comboOptions,
-    addFiles, removeFile, setDeviceName, clearDevice, swapDevices,
-  } = useCapaCompare();
-
-  const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
-
-  const isProcessing = deviceA.isProcessing || deviceB.isProcessing;
-  const hasResult = !!compareResult;
-
-  const handleFilesDrop = useCallback(async (side: 'a' | 'b', files: File[]) => {
-    await addFiles(side, files);
-    setIsHeaderExpanded(false);
-  }, [addFiles]);
-
-  const handleClearDevice = useCallback((side: 'a' | 'b') => {
-    clearDevice(side);
-    setIsHeaderExpanded(false);
-  }, [clearDevice]);
-
-  // Auto-expand dropzones when dragging files over a collapsed single-device or compare view
-  const handleRootDragEnter = useCallback((e: React.DragEvent) => {
-    const hasLoaded = hasResult || Boolean(deviceA.normalized || deviceB.normalized);
-    if (hasLoaded && !isHeaderExpanded && e.dataTransfer?.types?.includes('Files')) {
-      setIsHeaderExpanded(true);
-    }
-  }, [hasResult, deviceA.normalized, deviceB.normalized, isHeaderExpanded]);
-
-  // Tauri v2: browser DragEvent is not fired for OS-level file drops.
-  // Uses registered TauriAdapter (set by OhMyCapa App.tsx via registerTauriAdapter).
-  useEffect(() => {
-    const tauriAdapter = getTauriAdapter();
-    if (!tauriAdapter) return;
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    (async () => {
-      unlisten = await tauriAdapter.onDragDrop(async (paths, x) => {
-        const validPaths = paths.filter(p => { const n = p.toLowerCase(); return n.endsWith('.txt') || n.endsWith('.json'); });
-        if (validPaths.length === 0) return;
-        const files = await Promise.all(
-          validPaths.map(async (p) => {
-            const text = await tauriAdapter.readTextFile(p);
-            return new File([text], p.split(/[\\/]/).pop() ?? p, { type: 'text/plain' });
-          })
-        );
-        const physicalHalf = window.innerWidth * (window.devicePixelRatio || 1) / 2;
-        await addFiles(x > physicalHalf ? 'b' : 'a', files);
-        setIsHeaderExpanded(false);
-      });
-      if (cancelled) { unlisten(); unlisten = undefined; }
-    })().catch(console.error);
-    return () => { cancelled = true; unlisten?.(); };
-  }, [addFiles]);
-
-  // Derive single device info when no comparison is active
-  const singleDeviceInfo = useMemo(() => {
-    if (hasResult || isProcessing || isComparing) return null;
-    if (deviceA.normalized) return { device: deviceA.normalized, side: 'A' as const };
-    if (deviceB.normalized) return { device: deviceB.normalized, side: 'B' as const };
-    return null;
-  }, [hasResult, isProcessing, isComparing, deviceA.normalized, deviceB.normalized]);
-
-  // Available RATs derived from compare result
-  const availableRats = useMemo(() => {
-    if (!compareResult) return [];
-    return RAT_TABS
-      .filter(t => !!compareResult.ratResults[t.value])
-      .map(t => {
-        const ratResult = compareResult.ratResults[t.value];
-        const featuresDiff = compareResult.featuresDiff?.[t.value];
-
-        const uniqueCount = ratResult
-          ? ratResult.comboDiffs.filter(d => d.status === 'a-only-unique' || d.status === 'b-only-unique').length
-          : 0;
-
-        const featureDiffCount = featuresDiff
-          ? featuresDiff.counts.different + featuresDiff.counts.aOnly + featuresDiff.counts.bOnly
-          : 0;
-
-        return { ...t, uniqueCount, featureDiffCount };
-      });
-  }, [compareResult]);
-
-  const activeRatValue = useMemo(() => {
-    return availableRats.find(t => t.value === activeRat)?.value ?? availableRats[0]?.value;
-  }, [availableRats, activeRat]);
-
-  const dropzoneCard = (
-    <Paper
-      elevation={0}
-      sx={{
-        p: 2,
-        border: '1px solid',
-        borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-        borderRadius: 3,
-        bgcolor: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.6)',
-        backdropFilter: 'blur(10px)',
-        boxShadow: '0 4px 24px rgba(0,0,0,0.02)',
-      }}
-    >
-      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 2, alignItems: 'stretch' }}>
-        <CapaDropzone
-          side="A"
-          device={deviceA}
-          onFilesDrop={files => { void handleFilesDrop('a', files); }}
-          onRemoveFile={name => removeFile('a', name)}
-          onNameChange={name => setDeviceName('a', name)}
-          onClear={() => handleClearDevice('a')}
-          onOpenUrl={onOpenUrl}
-        />
-
-        {/* Center Area: Swap or Loading Status */}
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', px: 1 }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5 }}>
-            {isProcessing || isComparing ? (
-              <CircularProgress size={20} />
-            ) : (
-              <Tooltip title="Swap A ↔ B" placement="top">
-                <span>
-                  <IconButton
-                    size="small"
-                    onClick={swapDevices}
-                    disabled={!deviceA.files.length && !deviceB.files.length}
-                    sx={{
-                      color: hasResult ? 'primary.main' : 'text.disabled',
-                      '&:hover': { bgcolor: 'action.hover' },
-                    }}
-                  >
-                    <SwapHorizIcon sx={{ fontSize: 28 }} />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            )}
-            <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.disabled' }}>
-              vs
-            </Typography>
-          </Box>
-        </Box>
-
-        <CapaDropzone
-          side="B"
-          device={deviceB}
-          onFilesDrop={files => { void handleFilesDrop('b', files); }}
-          onRemoveFile={name => removeFile('b', name)}
-          onNameChange={name => setDeviceName('b', name)}
-          onClear={() => handleClearDevice('b')}
-          onOpenUrl={onOpenUrl}
-        />
       </Box>
     </Paper>
   );
+
+  const compareTabValue =
+    viewMode === 'overview'
+      ? '__overview__'
+      : viewMode === 'global-features'
+        ? '__global_features__'
+        : (activeRatValue ?? false);
 
   return (
     <Box
       onDragEnter={handleRootDragEnter}
-      sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', bgcolor: 'background.default', position: 'relative' }}
+      onDragOver={handleRootDragOver}
+      onDragLeave={handleRootDragLeave}
+      onDrop={handleRootDrop}
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        overflow: 'hidden',
+        bgcolor: 'background.default',
+        position: 'relative',
+      }}
     >
-      {/* Premium subtle gradient background */}
-      <Box sx={{
-        position: 'absolute', top: 0, left: 0, right: 0, height: 350,
-        background: isDark
-          ? 'linear-gradient(180deg, rgba(33,150,243,0.06) 0%, rgba(33,150,243,0) 100%)'
-          : 'linear-gradient(180deg, rgba(33,150,243,0.04) 0%, rgba(33,150,243,0) 100%)',
-        pointerEvents: 'none',
-        zIndex: 0
-      }} />
+      <GlobalFileDropOverlay
+        open={isDragOverlayOpen}
+        onDropSide={(side, files) => { void handleFilesDrop(side, files); }}
+        onClose={() => {
+          dragDepthRef.current = 0;
+          setIsDragOverlayOpen(false);
+        }}
+      />
 
-      <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', px: 2, py: 1.25, display: 'flex', flexDirection: 'column', gap: 1.25, zIndex: 1 }}>
-        {/* Compact 1-line header + collapsible drawer in Compare or Single Device mode */}
-        {compareResult ? (
+      <Dialog
+        open={reportNotice !== null}
+        onClose={closeReportNotice}
+        aria-labelledby={reportTitleId}
+        aria-describedby={reportDescriptionId}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle id={reportTitleId}>Report unclassified capabilities?</DialogTitle>
+        <DialogContent>
+          <DialogContentText id={reportDescriptionId}>
+            This analysis found {reportNotice?.totalCount} unclassified {reportNotice?.totalCount === 1 ? 'capability' : 'capabilities'}.
+            You can include a log excerpt in the GitHub draft, or report later from the Features tab.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button autoFocus onClick={closeReportNotice}>Not now</Button>
+          <Button variant="contained" onClick={editIssueReport}>Report to GitHub</Button>
+        </DialogActions>
+      </Dialog>
+      {editingReport && (
+        <SpecIssueReportDialog report={editingReport} onClose={() => setEditingReport(null)} onOpenUrl={onOpenUrl} />
+      )}
+
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          overflow: 'hidden',
+          px: { xs: 1, sm: 2 },
+          py: 1.25,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1.25,
+          position: 'relative',
+          zIndex: 1,
+        }}
+      >
+        {/* Top Workbench Bar + Collapsible Files Drawer */}
+        {compareResult && crossRatMetrics ? (
           <>
-            <CompactCompareHeader
+            <CompareTopBar
               deviceA={deviceA}
               deviceB={deviceB}
               compareResult={compareResult}
+              metrics={crossRatMetrics}
               isProcessing={isProcessing}
               isComparing={isComparing}
-              isExpanded={isHeaderExpanded}
-              onToggleExpand={() => setIsHeaderExpanded(v => !v)}
+              isFilesExpanded={isFilesDrawerOpen}
+              onToggleFiles={() => setIsFilesDrawerOpen(v => !v)}
               onSwap={swapDevices}
+              onReset={handleReset}
+              onRenameDevice={setDeviceName}
+              onKpiClick={handleKpiClick}
+              globalQuery={globalFeatureQuery}
+              onGlobalQueryChange={handleGlobalQueryChange}
+              globalSearchRef={globalSearchInputRef}
+              globalMatchCount={globalMatchCount}
             />
-            <Collapse in={isHeaderExpanded} unmountOnExit>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-                {dropzoneCard}
-                <CompareSummaryDashboard result={compareResult} />
+            <Collapse in={isFilesDrawerOpen} unmountOnExit>
+              <Box sx={{ maxHeight: '50vh', overflowY: 'auto' }}>
+                {filesDrawerDropzone}
               </Box>
             </Collapse>
           </>
         ) : singleDeviceInfo ? (
           <>
-            <CompactSingleHeader
+            <SingleTopBar
               device={singleDeviceInfo.device}
               side={singleDeviceInfo.side}
               deviceA={deviceA}
               deviceB={deviceB}
               isProcessing={isProcessing}
-              isExpanded={isHeaderExpanded}
-              onToggleExpand={() => setIsHeaderExpanded(v => !v)}
+              isFilesExpanded={isFilesDrawerOpen}
+              onExpandFiles={() => setIsFilesDrawerOpen(true)}
+              onToggleFiles={() => setIsFilesDrawerOpen(v => !v)}
               onSwap={swapDevices}
+              onReset={handleReset}
+              onRenameDevice={setDeviceName}
+              globalQuery={globalFeatureQuery}
+              onGlobalQueryChange={handleGlobalQueryChange}
+              globalSearchRef={globalSearchInputRef}
+              globalMatchCount={globalMatchCount}
             />
-            <Collapse in={isHeaderExpanded} unmountOnExit>
-              {dropzoneCard}
+            <Collapse in={isFilesDrawerOpen} unmountOnExit>
+              <Box sx={{ maxHeight: '55vh', overflowY: 'auto' }}>
+                {filesDrawerDropzone}
+              </Box>
             </Collapse>
           </>
-        ) : (
-          dropzoneCard
-        )}
+        ) : null}
 
-        {/* Global States: Comparing / Empty */}
+        {/* Comparing Spinner */}
         {isComparing && !hasResult && (
           <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', py: 6 }}>
             <Box sx={{ textAlign: 'center', color: 'text.secondary' }}>
               <CircularProgress size={32} sx={{ mb: 1.5 }} />
-              <Typography variant="body2" sx={{ opacity: 0.7 }}>Comparing...</Typography>
+              <Typography variant="body2" sx={{ opacity: 0.75 }}>Comparing capabilities...</Typography>
             </Box>
           </Box>
         )}
 
-        {!hasResult && !isProcessing && !isComparing && !singleDeviceInfo && (
-          <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', py: 6 }}>
-            <Box sx={{ textAlign: 'center', color: 'text.disabled' }}>
-              <CompareArrowsIcon sx={{ fontSize: 48, mb: 1, opacity: 0.3 }} />
-              <Typography variant="body2" sx={{ opacity: 0.6 }}>
-                Drop UE CAPA files of two devices to start comparison
-              </Typography>
-              <Typography variant="caption" sx={{ opacity: 0.4, display: 'block', mt: 0.5 }}>
-                Supports MTK / SLSI / QUALCOMM .txt files · Automatic RAT merging by dropping multiple files
-              </Typography>
-              {emptyStateExtra && (
-                <Box sx={{ mt: 2.5, display: 'flex', justifyContent: 'center', gap: 1, flexWrap: 'wrap' }}>
-                  {emptyStateExtra}
-                </Box>
-              )}
-            </Box>
-          </Box>
+        {/* Empty State */}
+        {!hasResult && !isComparing && !singleDeviceInfo && (
+          <EmptyCompareStage
+            deviceA={deviceA}
+            deviceB={deviceB}
+            isProcessing={isProcessing}
+            isComparing={isComparing}
+            onFilesDrop={(side, files) => { void handleFilesDrop(side, files); }}
+            onRemoveFile={removeFile}
+            onClearDevice={handleClearDevice}
+            onSwap={swapDevices}
+            onOpenUrl={onOpenUrl}
+            emptyStateExtra={emptyStateExtra}
+          />
         )}
 
-        {/* Single Device View */}
+        {/* Single Device Workspace */}
         {singleDeviceInfo && (
           <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <SingleDeviceView device={singleDeviceInfo.device} side={singleDeviceInfo.side} onOpenUrl={onOpenUrl} hideHeader />
+            {singleViewMode === 'global-features' ? (
+              <Paper
+                elevation={0}
+                sx={{
+                  border: '1px solid',
+                  borderColor: surface.border,
+                  borderRadius: 2,
+                  overflow: 'hidden',
+                  bgcolor: surface.panelBg,
+                  flex: 1,
+                  minHeight: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}
+              >
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    borderBottom: '1px solid',
+                    borderColor: surface.border,
+                    bgcolor: surface.headerBg,
+                    px: 1.5,
+                    py: 0.65,
+                    gap: 1,
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <ManageSearchIcon sx={{ fontSize: 17, color: 'primary.main' }} />
+                    <Typography variant="subtitle2" sx={{ fontSize: '0.78rem', fontWeight: 700 }}>
+                      All Features Search · Device {singleDeviceInfo.side}
+                    </Typography>
+                  </Box>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<ArrowBackIcon sx={{ fontSize: 14 }} />}
+                    onClick={() => {
+                      setGlobalFeatureQuery('');
+                      setSingleViewMode('rat');
+                    }}
+                    sx={{ fontSize: '0.68rem', py: 0.2, px: 1, textTransform: 'none', borderRadius: 1.5, minHeight: 26 }}
+                  >
+                    Back to RAT View
+                  </Button>
+                </Box>
+                <Box sx={{ p: 1.5, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                  <GlobalSingleFeaturesView
+                    device={singleDeviceInfo.device}
+                    side={singleDeviceInfo.side}
+                    query={globalFeatureQuery}
+                    onQueryChange={handleGlobalQueryChange}
+                    precomputedIndex={globalSingleIndex}
+                    onJumpToRat={handleJumpFromGlobalSingle}
+                    onOpenUrl={onOpenUrl}
+                  />
+                </Box>
+              </Paper>
+            ) : (
+              <SingleDeviceView
+                device={singleDeviceInfo.device}
+                side={singleDeviceInfo.side}
+                onOpenUrl={onOpenUrl}
+                hideHeader
+                onOpenGlobalFeatures={() => setSingleViewMode('global-features')}
+                jumpTarget={singleJumpTarget}
+              />
+            )}
           </Box>
         )}
 
-        {/* Comparison Result View */}
-        {compareResult && (
-          <ComparisonPanel
-            compareResult={compareResult}
-            availableRats={availableRats}
-            activeRatValue={activeRatValue}
-            comboOptions={comboOptions}
-            onRatChange={setActiveRat}
-            onOpenUrl={onOpenUrl}
-          />
+        {/* AB Compare Workspace */}
+        {compareResult && crossRatMetrics && (
+          <Paper
+            elevation={0}
+            sx={{
+              border: '1px solid',
+              borderColor: surface.border,
+              borderRadius: 2,
+              overflow: 'hidden',
+              bgcolor: surface.panelBg,
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            {/* Unified Header Row: Overview + RAT Tabs + All Features (Left) | Sub-Section Switcher (Right) */}
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: '1px solid',
+                borderColor: surface.border,
+                bgcolor: surface.headerBg,
+                px: 1,
+                py: 0.25,
+                gap: 1,
+                flexWrap: 'wrap',
+              }}
+            >
+              <Tabs
+                value={compareTabValue}
+                onChange={(_, v) => {
+                  if (v === '__overview__') {
+                    previousCompareViewRef.current = 'overview';
+                    setViewMode('overview');
+                  } else if (v === '__global_features__') {
+                    handleOpenGlobalFeatures();
+                  } else {
+                    previousCompareViewRef.current = 'rat';
+                    setActiveRat(v as RatType);
+                    setViewMode('rat');
+                  }
+                }}
+                variant="scrollable"
+                scrollButtons="auto"
+                sx={{
+                  minHeight: 38,
+                  maxWidth: '100%',
+                  '& .MuiTab-root': { minHeight: 38, py: 0, fontSize: '0.74rem', textTransform: 'none', fontWeight: 600 },
+                }}
+              >
+                <Tab
+                  value="__overview__"
+                  label={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <DashboardOutlinedIcon sx={{ fontSize: 15 }} />
+                      <span>Overview</span>
+                    </Box>
+                  }
+                />
+
+                {availableRats.map(({ value, label, uniqueCount, featureDiffCount }) => (
+                  <Tab
+                    key={value}
+                    value={value}
+                    label={<RatTabLabel label={label} uniqueCount={uniqueCount} featureDiffCount={featureDiffCount} />}
+                  />
+                ))}
+
+                {crossRatMetrics.totals.features.total > 0 && (
+                  <Tab
+                    value="__global_features__"
+                    label={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <ManageSearchIcon sx={{ fontSize: 15 }} />
+                        <span>All Features</span>
+                        <Chip
+                          label={
+                            crossRatMetrics.totals.features.diff > 0
+                              ? crossRatMetrics.totals.features.diff
+                              : crossRatMetrics.totals.features.total
+                          }
+                          size="small"
+                          sx={{
+                            height: 16,
+                            fontSize: '0.62rem',
+                            fontWeight: 700,
+                            fontFamily: MONO_FONT_FAMILY,
+                            bgcolor:
+                              crossRatMetrics.totals.features.diff > 0
+                                ? 'rgba(245,158,11,0.14)'
+                                : 'rgba(16,185,129,0.12)',
+                            color:
+                              crossRatMetrics.totals.features.diff > 0
+                                ? STATUS_COLOR.amber
+                                : STATUS_COLOR.green,
+                            '& .MuiChip-label': { px: 0.55 },
+                          }}
+                        />
+                      </Box>
+                    }
+                  />
+                )}
+              </Tabs>
+
+              {viewMode === 'rat' && Boolean(activeRatResult || (activeFeatureDiff && activeFeatureDiff.diffs.length > 0)) && (
+                <ToggleButtonGroup
+                  size="small"
+                  exclusive
+                  value={activeSection}
+                  onChange={handleSectionChange}
+                  sx={{
+                    '& .MuiToggleButton-root': {
+                      py: 0.25,
+                      px: 1,
+                      fontSize: '0.68rem',
+                      fontWeight: 600,
+                      textTransform: 'none',
+                      minHeight: 26,
+                      gap: 0.5,
+                    },
+                  }}
+                >
+                  {sectionMeta.combos.available && (
+                    <ToggleButton value="combos">
+                      <span>Combos</span>
+                      <Chip
+                        size="small"
+                        label={sectionMeta.combos.diff > 0 ? `${sectionMeta.combos.diff}/${sectionMeta.combos.total}` : `${sectionMeta.combos.total}`}
+                        sx={{
+                          height: 15,
+                          fontSize: '0.58rem',
+                          fontWeight: 700,
+                          fontFamily: MONO_FONT_FAMILY,
+                          bgcolor: sectionMeta.combos.diff > 0 ? 'rgba(239,68,68,0.14)' : 'rgba(16,185,129,0.12)',
+                          color: sectionMeta.combos.diff > 0 ? STATUS_COLOR.red : STATUS_COLOR.green,
+                        }}
+                      />
+                    </ToggleButton>
+                  )}
+                  {sectionMeta.bands.available && (
+                    <ToggleButton value="bands">
+                      <span>Bands</span>
+                      <Chip
+                        size="small"
+                        label={sectionMeta.bands.diff > 0 ? `${sectionMeta.bands.diff}` : `${sectionMeta.bands.total}`}
+                        sx={{
+                          height: 15,
+                          fontSize: '0.58rem',
+                          fontWeight: 700,
+                          fontFamily: MONO_FONT_FAMILY,
+                          bgcolor: sectionMeta.bands.diff > 0 ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.12)',
+                          color: sectionMeta.bands.diff > 0 ? STATUS_COLOR.amber : STATUS_COLOR.green,
+                        }}
+                      />
+                    </ToggleButton>
+                  )}
+                  {sectionMeta.features.available && (
+                    <ToggleButton value="features">
+                      <span>Features</span>
+                      <Chip
+                        size="small"
+                        label={sectionMeta.features.diff > 0 ? `${sectionMeta.features.diff}` : `${sectionMeta.features.total}`}
+                        sx={{
+                          height: 15,
+                          fontSize: '0.58rem',
+                          fontWeight: 700,
+                          fontFamily: MONO_FONT_FAMILY,
+                          bgcolor: sectionMeta.features.diff > 0 ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.12)',
+                          color: sectionMeta.features.diff > 0 ? STATUS_COLOR.amber : STATUS_COLOR.green,
+                        }}
+                      />
+                    </ToggleButton>
+                  )}
+                </ToggleButtonGroup>
+              )}
+            </Box>
+
+            {/* Body */}
+            {viewMode === 'overview' ? (
+              <Box sx={{ p: 1.5, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                <CompareOverviewView
+                  compareResult={compareResult}
+                  metrics={crossRatMetrics}
+                  deviceAName={deviceAName}
+                  deviceBName={deviceBName}
+                  onDrillDown={handleDrillDown}
+                  onOpenGlobalFeatures={handleOpenGlobalFeatures}
+                />
+              </Box>
+            ) : viewMode === 'global-features' ? (
+              <Box sx={{ p: 1.5, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                <GlobalCompareFeaturesView
+                  compareResult={compareResult}
+                  query={globalFeatureQuery}
+                  onQueryChange={handleGlobalQueryChange}
+                  deviceAName={deviceAName}
+                  deviceBName={deviceBName}
+                  initialStatus={globalFeatureStatus}
+                  statusVersion={globalFeatureStatusVersion}
+                  precomputedIndex={globalCompareIndex}
+                  onJumpToRat={handleJumpFromGlobalCompare}
+                  onOpenUrl={onOpenUrl}
+                />
+              </Box>
+            ) : availableRats.length > 0 && activeRatValue && (activeRatResult || (activeFeatureDiff && activeFeatureDiff.diffs.length > 0)) ? (
+              <Box key={activeRatValue} sx={{ flexDirection: 'column', flex: 1, minHeight: 0, display: 'flex' }}>
+                <RatDetailView
+                  ratType={activeRatValue}
+                  activeSection={activeSection}
+                  ratResult={activeRatResult}
+                  compareResult={compareResult}
+                  deviceAName={deviceAName}
+                  deviceBName={deviceBName}
+                  comboOptions={comboOptions}
+                  drillDownTarget={drillDownTarget}
+                  onOpenUrl={onOpenUrl}
+                />
+              </Box>
+            ) : (
+              <Box sx={{ py: 4, textAlign: 'center', color: 'text.disabled' }}>
+                <Typography variant="body2">No RAT data available</Typography>
+              </Box>
+            )}
+          </Paper>
         )}
       </Box>
     </Box>
@@ -968,4 +1103,3 @@ const CapaComparePage: React.FC<CapaComparePageProps> = ({ onOpenUrl, emptyState
 };
 
 export default CapaComparePage;
-

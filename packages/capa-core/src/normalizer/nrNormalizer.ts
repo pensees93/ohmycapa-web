@@ -252,7 +252,7 @@ export function extractNRRat(nrPdu: Asn1Record): {
     }
 
     const fsc = extractNumber(rawCombo['featureSetCombination']);
-    const powerClass = cleanPowerClass(rawCombo['powerClass-v1530'] ?? rawCombo['powerClass-v1610']);
+    const powerClass = cleanPowerClass(v1610?.['powerClass-v1610'] ?? rawCombo['powerClass-v1530'] ?? rawCombo['powerClass-v1610']);
     const bcs = parseBitStringToIndices(rawCombo['supportedBandwidthCombinationSet']);
     const caParametersNR = extractCaParametersNR(
       rawCombo['ca-ParametersNR'],
@@ -260,7 +260,6 @@ export function extractNRRat(nrPdu: Asn1Record): {
       v1560?.['ca-ParametersNR-v1560']
     );
     const aggregatedBw = extractAggregatedBw(v1780);
-    void v1610;
 
     combos.push({
       bands: bandParams,
@@ -274,7 +273,7 @@ export function extractNRRat(nrPdu: Asn1Record): {
   }
 
   // Resolve FeatureSet references onto NR combinations and enrich NR bands
-  resolveBandCombinationsWithFeatureSets(
+  const resolvedCombos = resolveBandCombinationsWithFeatureSets(
     combos,
     rawBandLists,
     fsData.featureSetCombinations,
@@ -285,9 +284,10 @@ export function extractNRRat(nrPdu: Asn1Record): {
 
   // Fill NR BandParam fallbacks from band capabilities and finalize keys + CC counts
   const bandLookup = new Map<number, NRBandInfo>(bands.map((b) => [b.band, b]));
-  for (const combo of combos) {
+  for (const combo of resolvedCombos) {
     let dlCc = 0;
     let ulCc = 0;
+    const hasResolvedCc = combo.dlCc !== undefined && combo.ulCc !== undefined;
     for (const bp of combo.bands) {
       const bandInfo = bandLookup.get(bp.band);
       if (bandInfo) {
@@ -296,18 +296,23 @@ export function extractNRRat(nrPdu: Asn1Record): {
           bp.ulQam = pickHigherQam(bp.ulQam, bandInfo.ulQam);
         }
       }
-      if (bp.bandwidthClassDL) dlCc += getBwClassCcCount(bp.bandwidthClassDL);
-      if (bp.bandwidthClassUL) ulCc += getBwClassCcCount(bp.bandwidthClassUL);
+      if (!hasResolvedCc) {
+        const isFr2 = bp.band >= 257;
+        if (bp.bandwidthClassDL) dlCc += getBwClassCcCount(bp.bandwidthClassDL, 'nr', isFr2);
+        if (bp.bandwidthClassUL) ulCc += getBwClassCcCount(bp.bandwidthClassUL, 'nr', isFr2);
+      }
     }
-    combo.dlCc = dlCc;
-    combo.ulCc = ulCc;
+    if (!hasResolvedCc) {
+      combo.dlCc = dlCc;
+      combo.ulCc = ulCc;
+    }
     combo.key = generateCombinationKey(combo);
   }
 
   return {
     ratInfo: {
       bands,
-      bandCombinations: combos,
+      bandCombinations: resolvedCombos,
       ...(fsData.nrFeatureSets && fsData.nrFeatureSets.length > 0
         ? { featureSets: fsData.nrFeatureSets }
         : {}),

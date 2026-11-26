@@ -18,9 +18,35 @@ const BW_CLASS_CC_COUNT: Record<string, number> = {
   q: 1,
 };
 
-export function getBwClassCcCount(bwClass: string | undefined): number {
+// 3GPP TS 38.101-2 Table 5.3A.4-1 (NR FR2 CA bandwidth classes)
+const FR2_BW_CLASS_CC_COUNT: Record<string, number> = {
+  a: 1,
+  b: 2,
+  c: 2,
+  d: 2,
+  e: 3,
+  f: 4,
+  g: 2,
+  h: 3,
+  i: 4,
+  j: 5,
+  k: 6,
+  l: 7,
+  m: 8,
+  q: 4,
+};
+
+export function getBwClassCcCount(
+  bwClass: string | undefined,
+  ratType?: 'nr' | 'eutra',
+  isFr2 = false
+): number {
   if (!bwClass) return 1;
-  return BW_CLASS_CC_COUNT[bwClass.toLowerCase()] ?? 1;
+  const lower = bwClass.toLowerCase();
+  if (ratType === 'nr' && isFr2) {
+    return FR2_BW_CLASS_CC_COUNT[lower] ?? BW_CLASS_CC_COUNT[lower] ?? 1;
+  }
+  return BW_CLASS_CC_COUNT[lower] ?? 1;
 }
 
 function bandParamToKeySegment(bp: BandParameter, opts: ComboDisplayOptions = {}): string {
@@ -46,10 +72,12 @@ function bandParamToKeySegment(bp: BandParameter, opts: ComboDisplayOptions = {}
 }
 
 export function generateCombinationKey(combo: BandCombination, opts: ComboDisplayOptions = {}): string {
-  const sorted = [...combo.bands].sort((a, b) => {
-    // EUTRA ('B') before NR ('n'), then ascending band number
-    if (a.ratType !== b.ratType) return a.ratType === 'eutra' ? -1 : 1;
-    return a.band - b.band;
+  const withSegs = combo.bands.map((bp) => ({ bp, seg: bandParamToKeySegment(bp, opts) }));
+  withSegs.sort((a, b) => {
+    // EUTRA ('B') before NR ('n'), then ascending band number, then deterministic segment tie-breaker
+    if (a.bp.ratType !== b.bp.ratType) return a.bp.ratType === 'eutra' ? -1 : 1;
+    if (a.bp.band !== b.bp.band) return a.bp.band - b.bp.band;
+    return a.seg.localeCompare(b.seg);
   });
-  return sorted.map((bp) => bandParamToKeySegment(bp, opts)).join('-');
+  return withSegs.map((x) => x.seg).join('-');
 }

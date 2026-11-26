@@ -593,6 +593,7 @@ export function extractEUTRAFeatures(eutraPdu: Asn1Record, includeUnclassified =
   }
 
   const fgiRel10 = map.get('featureGroupIndRel10-r10');
+  const fgiRel10Bits = extractBitStringContent(fgiRel10);
   if (fgiRel10 !== undefined) {
     leaves.push(...extractFgiBits(fgiRel10, 'FGI-Rel10', FGI_REL10_TABLE, 100));
   }
@@ -601,7 +602,7 @@ export function extractEUTRAFeatures(eutraPdu: Asn1Record, includeUnclassified =
   const fgiRel10Fdd = isRecord(fddContainer)
     ? fddContainer['featureGroupIndRel10-v1060']
     : undefined;
-  if (fgiRel10Fdd !== undefined && fgiRel10Fdd !== fgiRel10) {
+  if (fgiRel10Fdd !== undefined && extractBitStringContent(fgiRel10Fdd) !== fgiRel10Bits) {
     leaves.push(...extractFgiBits(fgiRel10Fdd, 'FGI-Rel10-FDD', FGI_REL10_TABLE, 100));
   }
 
@@ -609,7 +610,7 @@ export function extractEUTRAFeatures(eutraPdu: Asn1Record, includeUnclassified =
   const fgiRel10Tdd = isRecord(tddContainer)
     ? tddContainer['featureGroupIndRel10-v1060']
     : undefined;
-  if (fgiRel10Tdd !== undefined && fgiRel10Tdd !== fgiRel10) {
+  if (fgiRel10Tdd !== undefined && extractBitStringContent(fgiRel10Tdd) !== fgiRel10Bits) {
     leaves.push(...extractFgiBits(fgiRel10Tdd, 'FGI-Rel10-TDD', FGI_REL10_TABLE, 100));
   }
 

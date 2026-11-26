@@ -105,8 +105,12 @@ export function deepMergeFallback(primary: Asn1Record, secondary: Asn1Record): A
     }
 
     if (isPlainRecord(priVal)) {
-      if (Object.keys(priVal).length === 0 && isPlainRecord(secVal) && Object.keys(secVal).length > 0) {
-        result[key] = secVal;
+      if (Object.keys(priVal).length === 0) {
+        if (isPlainRecord(secVal) && Object.keys(secVal).length > 0) {
+          result[key] = secVal;
+        } else if (Array.isArray(secVal) && secVal.length > 0) {
+          result[key] = secVal;
+        }
       } else if (isPlainRecord(secVal)) {
         result[key] = deepMergeFallback(priVal, secVal);
       }

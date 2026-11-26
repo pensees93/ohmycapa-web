@@ -128,10 +128,12 @@ export {
   buildUnclassifiedSpecIssueReport,
   collectAutoSpecEntries,
   parseAutoSpecBlockFromIssueBody,
+  prepareUnclassifiedSpecIssueDraft,
   type AutoSpecIssueEntry,
   type ParseErrorIssueReport,
   type UnclassifiedSpecIssueReport,
 } from './compare/githubIssueReport';
+export { collectSpecLogExcerpts } from './compare/specLogExcerpts';
 
 // Excel styling utilities (shared with @ohmycapa/mtk-core)
 export {

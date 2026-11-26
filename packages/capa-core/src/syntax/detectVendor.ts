@@ -65,7 +65,9 @@ export function detectInputFormat(content: string): VendorDetectionResult {
   if (
     head.includes('UL-DCCH-Message') ||
     head.includes('NR Radio Resource Control (RRC) protocol') ||
-    content.includes('UL-DCCH-Message')
+    head.includes('LTE Radio Resource Control (RRC) protocol') ||
+    content.includes('UL-DCCH-Message') ||
+    /\b(?:UE-NR-Capability|UE-EUTRA-Capability|UE-MRDC-Capability|InterRATHandoverInfo)\b/.test(head)
   ) {
     return { vendor: 'SLSI', format: 'OTA_SLSI' };
   }

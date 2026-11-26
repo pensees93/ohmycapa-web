@@ -273,5 +273,28 @@ Message Content
       expect(Object.keys(utraContainer)).toEqual(['present']);
       expect((utraContainer['present'] as Asn1Record)['ue-RadioAccessCapability']).toBeDefined();
     });
+
+    it('detects MRDC-only capability headers and preserves primary arrays while merging sourceFiles', () => {
+      expect(
+        detectInputFormat('UE-MRDC-Capability\n  rf-ParametersMRDC\n    supportedBandCombinationList')
+      ).toEqual({ vendor: 'SLSI', format: 'OTA_SLSI' });
+
+      const merged = deepMergeFallback(
+        { arr: ['primary'], nested: {} },
+        { arr: ['secondary'], nested: { extraFlag: 'supported' }, extra: 42 }
+      );
+      expect(merged['arr']).toEqual(['primary']);
+      expect(merged['nested']).toEqual({ extraFlag: 'supported' });
+      expect(merged['extra']).toBe(42);
+
+      const combined = mergeCanonicalAsts([
+        { vendor: 'UNKNOWN', fileName: 'a.txt', sourceFiles: ['a.txt'], pdus: { eutra: { k: 1 } }, warnings: [] },
+        { vendor: 'MTK', fileName: 'b.txt', sourceFiles: ['b.txt'], pdus: { nr: { k: 2 } }, warnings: ['w1'] },
+      ]);
+      expect(combined.vendor).toBe('MTK');
+      expect(combined.sourceFiles).toEqual(['a.txt', 'b.txt']);
+      expect(combined.pdus.eutra).toEqual({ k: 1 });
+      expect(combined.pdus.nr).toEqual({ k: 2 });
+    });
   });
 });

@@ -9,6 +9,6 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['packages/capa-core/tests/**/*.test.ts', 'src/**/*.test.ts'],
+    include: ['packages/capa-core/tests/**/*.test.ts', 'packages/capa-ui/tests/**/*.test.ts', 'src/**/*.test.ts'],
   },
 });

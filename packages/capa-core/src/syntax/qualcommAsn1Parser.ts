@@ -70,8 +70,9 @@ function tokenizeAsn1(input: string): Token[] {
         if (input[j] === '\\' && j + 1 < len) j += 2;
         else j++;
       }
+      const endContent = j < len ? j : len;
       if (j < len) j++;
-      tokens.push({ type: 'STR', val: input.slice(i + 1, j - 1) });
+      tokens.push({ type: 'STR', val: input.slice(i + 1, endContent) });
       i = j;
       continue;
     }
@@ -286,9 +287,28 @@ export function parseQualcommAsn1(content: string, fileName?: string): Canonical
 
   while ((match = RE_PDU_HEADER.exec(content)) !== null) {
     const pduName = match[1];
-    const searchFrom = match.index + match[0].length;
-    const braceStart = content.indexOf('{', searchFrom);
-    if (braceStart === -1) continue;
+    let cursor = match.index + match[0].length;
+    // Skip whitespace, ASN.1 '--' comments, and optional top-level CHOICE prefix (e.g. "c1 :")
+    while (cursor < content.length) {
+      const ch = content[cursor];
+      if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') {
+        cursor++;
+      } else if (ch === '-' && content[cursor + 1] === '-') {
+        while (cursor < content.length && content[cursor] !== '\n') cursor++;
+      } else {
+        break;
+      }
+    }
+    if (content[cursor] !== '{') {
+      const choicePrefix = /^[A-Za-z][\w-]*\s*:\s*/.exec(content.slice(cursor, cursor + 80));
+      if (choicePrefix && content[cursor + choicePrefix[0].length] === '{') {
+        cursor += choicePrefix[0].length;
+      } else {
+        // Scalar/hex/empty value declaration (e.g. "value Foo ::= 'AA'H") has no '{ ... }' block
+        continue;
+      }
+    }
+    const braceStart = cursor;
 
     const braceEnd = findMatchingBraceEnd(content, braceStart);
     const blockText = content.slice(braceStart, braceEnd);

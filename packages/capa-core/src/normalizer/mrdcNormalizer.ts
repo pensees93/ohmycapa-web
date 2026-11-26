@@ -148,7 +148,7 @@ export function extractMrdcRat(
     }
 
     const fsc = extractNumber(rawCombo['featureSetCombination']);
-    const powerClass = cleanPowerClass(rawCombo['powerClass-v1530'] ?? rawCombo['powerClass-v1610']);
+    const powerClass = cleanPowerClass(v1610?.['powerClass-v1610'] ?? rawCombo['powerClass-v1530'] ?? rawCombo['powerClass-v1610']);
     const bcs = parseBitStringToIndices(rawCombo['supportedBandwidthCombinationSet']);
     const caEutra = isRecord(rawCombo['ca-ParametersEUTRA']) ? rawCombo['ca-ParametersEUTRA'] : undefined;
     const bcsEutra = caEutra
@@ -166,7 +166,6 @@ export function extractMrdcRat(
       v1560?.['ca-ParametersNR-v1560']
     );
     const aggregatedBw = extractAggregatedBw(v1780);
-    void v1610;
 
     combos.push({
       bands: bandParams,
@@ -185,7 +184,7 @@ export function extractMrdcRat(
   const rawFsc = mrdcPdu['featureSetCombinations'];
   const fscList = rawFsc ? parseFeatureSetCombinations(rawFsc) : undefined;
 
-  resolveBandCombinationsWithFeatureSets(
+  const resolvedCombos = resolveBandCombinationsWithFeatureSets(
     combos,
     rawBandLists,
     fscList,
@@ -200,9 +199,10 @@ export function extractMrdcRat(
 
   const mrdcBandSet = new Map<string, NRBandInfo | EutraBandInfo>();
 
-  for (const combo of combos) {
+  for (const combo of resolvedCombos) {
     let dlCc = 0;
     let ulCc = 0;
+    const hasResolvedCc = combo.dlCc !== undefined && combo.ulCc !== undefined;
 
     for (const bp of combo.bands) {
       if (bp.ratType === 'nr') {
@@ -221,12 +221,17 @@ export function extractMrdcRat(
           if (bp.dlMimo === undefined && b.dlMimo !== undefined) bp.dlMimo = b.dlMimo;
         }
       }
-      if (bp.bandwidthClassDL) dlCc += getBwClassCcCount(bp.bandwidthClassDL);
-      if (bp.bandwidthClassUL) ulCc += getBwClassCcCount(bp.bandwidthClassUL);
+      if (!hasResolvedCc) {
+        const isFr2 = bp.ratType === 'nr' && bp.band >= 257;
+        if (bp.bandwidthClassDL) dlCc += getBwClassCcCount(bp.bandwidthClassDL, bp.ratType, isFr2);
+        if (bp.bandwidthClassUL) ulCc += getBwClassCcCount(bp.bandwidthClassUL, bp.ratType, isFr2);
+      }
     }
 
-    combo.dlCc = dlCc;
-    combo.ulCc = ulCc;
+    if (!hasResolvedCc) {
+      combo.dlCc = dlCc;
+      combo.ulCc = ulCc;
+    }
     combo.key = generateCombinationKey(combo);
   }
 
@@ -235,6 +240,6 @@ export function extractMrdcRat(
 
   return {
     bands: [...mrdcBandSet.values()],
-    bandCombinations: combos,
+    bandCombinations: resolvedCombos,
   };
 }

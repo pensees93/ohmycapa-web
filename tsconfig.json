@@ -24,6 +24,7 @@
     "src",
     "packages/capa-core/src",
     "packages/capa-core/tests",
-    "packages/capa-ui/src"
+    "packages/capa-ui/src",
+    "packages/capa-ui/tests"
   ]
 }

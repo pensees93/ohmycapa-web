@@ -569,4 +569,111 @@ describe('Stage 3 Compare & Key Generation Unit Tests', () => {
     expect(formatExportBaseName({ deviceName: '갤럭시 S25:a/b' })).toBe('갤럭시_S25_a_b');
     expect(formatExportBaseName({ deviceName: '', fileName: '.txt' }, 'DeviceA')).toBe('DeviceA');
   });
+
+  it('tracks band property diffs and strips UL MIMO/QAM annotations when display options hide them', () => {
+    const keyHidden = generateCombinationKey(
+      {
+        bands: [
+          { ratType: 'nr', band: 78, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4, ulMimo: 2, dlQam: 'qam256', ulQam: 'qam256' },
+        ],
+      },
+      { showMimo: false, showQam: false }
+    );
+    expect(keyHidden).toBe('n78a(UL,a)');
+
+    const devA = makeDevice('BandDiffA', {
+      nr: {
+        bands: [{ band: 78, displayName: 'n78', powerClass: 'pc2', dlMimo: 4, ulMimo: 2, dlQam: 'qam256', ulQam: 'qam256' }],
+        bandCombinations: [],
+      },
+    });
+    const devB = makeDevice('BandDiffB', {
+      nr: {
+        bands: [{ band: 78, displayName: 'n78', powerClass: 'pc3', dlMimo: 2, ulMimo: 1, dlQam: 'qam64' }],
+        bandCombinations: [],
+      },
+    });
+    const res = compareCapaFormats(devA, devB);
+    const bandDiff = res.ratResults.nr?.bandDiffs.find((b) => b.band === 78);
+    expect(bandDiff?.status).toBe('changed');
+    expect(bandDiff?.powerClass).toEqual({ a: 'pc2', b: 'pc3', status: 'changed' });
+    expect(bandDiff?.dlMimo).toEqual({ a: 4, b: 2, status: 'changed' });
+    expect(bandDiff?.ulMimo).toEqual({ a: 2, b: 1, status: 'changed' });
+    expect(bandDiff?.ulQam).toEqual({ a: 'qam256', b: undefined, status: 'a-only' });
+  });
+
+  it('normalizes UL MIMO 1 vs omitted to exact-same, formats 16QAM cover notes, and supports SUL UL coverage', () => {
+    const devA = makeDevice('Ul1Explicit', {
+      nr: {
+        bands: [{ band: 78, displayName: 'n78' }],
+        bandCombinations: [
+          {
+            bands: [{ ratType: 'nr', band: 78, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4, ulMimo: 1, dlQam: 'qam256' }],
+            dlCc: 1,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const devB = makeDevice('Ul1Omitted', {
+      nr: {
+        bands: [{ band: 78, displayName: 'n78' }],
+        bandCombinations: [
+          {
+            bands: [{ ratType: 'nr', band: 78, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4, dlQam: 'qam256' }],
+            dlCc: 1,
+            ulCc: 1,
+          },
+        ],
+      },
+    });
+    const ul1Diff = compareCapaFormats(devA, devB).ratResults.nr?.comboDiffs[0];
+    expect(ul1Diff?.status).toBe('exact-same');
+
+    const dev64 = makeDevice('Qam64', {
+      nr: {
+        bands: [],
+        bandCombinations: [
+          { bands: [{ ratType: 'nr', band: 78, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam64' }], dlCc: 1, ulCc: 0 },
+        ],
+      },
+    });
+    const dev16 = makeDevice('Qam16', {
+      nr: {
+        bands: [],
+        bandCombinations: [
+          { bands: [{ ratType: 'nr', band: 78, bandwidthClassDL: 'a', dlMimo: 4, dlQam: 'qam16' }], dlCc: 1, ulCc: 0 },
+        ],
+      },
+    });
+    const qamDiff = compareCapaFormats(dev64, dev16).ratResults.nr?.comboDiffs.find((d) => d.b);
+    expect(qamDiff?.status).toBe('b-only-covered');
+    expect(qamDiff?.paramNotes?.some((n) => n.includes('64QAM covers 16QAM'))).toBe(true);
+
+    const devSul = makeDevice('WithSul', {
+      nr: {
+        bands: [],
+        bandCombinations: [
+          {
+            bands: [
+              { ratType: 'nr', band: 78, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4 },
+              { ratType: 'nr', band: 80, bandwidthClassUL: 'a', ulMimo: 1 },
+            ],
+            dlCc: 1,
+            ulCc: 2,
+          },
+        ],
+      },
+    });
+    const devBase = makeDevice('NoSul', {
+      nr: {
+        bands: [],
+        bandCombinations: [
+          { bands: [{ ratType: 'nr', band: 78, bandwidthClassDL: 'a', bandwidthClassUL: 'a', dlMimo: 4 }], dlCc: 1, ulCc: 1 },
+        ],
+      },
+    });
+    const sulDiff = compareCapaFormats(devSul, devBase).ratResults.nr?.comboDiffs.find((d) => d.b);
+    expect(sulDiff?.status).toBe('b-only-covered');
+  });
 });

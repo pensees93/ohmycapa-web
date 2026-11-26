@@ -10,6 +10,7 @@ import { mergePduCandidates } from './pduMerger';
 interface IndentedLine {
   depth: number;
   trimmed: string;
+  lineIndex: number;
 }
 
 const RE_ITEMS = /^(\d+)\s+items?$/i;
@@ -18,7 +19,7 @@ const RE_SPARE = /^spare/i;
 const RE_BIT_PREFIX = /^([.01\s]{8,})\s+(.*)/;
 const RE_BIT_DISSECTION = /^[.01\s]{4,}\s*=/;
 const RE_BIT_LENGTH = /bit\s+length\s+\d+/i;
-const RE_ELLIPSIS_CLEAN = /[…\\.]{2,}$/;
+const RE_ELLIPSIS_CLEAN = /[….]{2,}$/;
 const RE_PAREN_INDEX = /\(\d+\)$/;
 const RE_ENUM_SUFFIX = /^(.*?)\s*\(\d+\)\s*$/;
 const RE_UPPER_TYPE_REF = /^[A-Z][A-Za-z0-9-]*$/;
@@ -42,7 +43,7 @@ function lineDepth(line: string): number {
  * Normalize flat lists in MTK logs where "Item N" and its children appear at the same depth
  * as the parent "key: N items" line.
  */
-function normalizeFlatLists(rawLines: string[]): IndentedLine[] {
+export function normalizeFlatLists(rawLines: string[]): IndentedLine[] {
   const out: IndentedLine[] = [];
   const len = rawLines.length;
   let i = 0;
@@ -60,7 +61,9 @@ function normalizeFlatLists(rawLines: string[]): IndentedLine[] {
 
     if (colonIdx !== -1) {
       const valueStr = trimmed.slice(colonIdx + 1).trim();
-      if (RE_ITEMS.test(valueStr)) {
+      const itemsMatch = valueStr.match(RE_ITEMS);
+      if (itemsMatch) {
+        const expectedCount = parseInt(itemsMatch[1], 10);
         let j = i + 1;
         while (j < len && !rawLines[j].trim()) j++;
 
@@ -69,9 +72,13 @@ function normalizeFlatLists(rawLines: string[]): IndentedLine[] {
           const nextDepth = lineDepth(rawLines[j]);
 
           if (nextDepth === depth && RE_ITEM_X.test(nextTrimmed)) {
-            out.push({ depth, trimmed });
+            out.push({ depth, trimmed, lineIndex: i });
             i++;
             let inItem = false;
+            let itemCount = 0;
+            let firstItemFlatCount = 0;
+            let curItemFlatCount = 0;
+            let curItemHasDescendant = false;
             while (i < len) {
               const fl = rawLines[i];
               const ft = fl.trim();
@@ -82,10 +89,27 @@ function normalizeFlatLists(rawLines: string[]): IndentedLine[] {
               const fd = lineDepth(fl);
               if (fd < depth) break;
               if (fd === depth && RE_ITEM_X.test(ft)) {
-                out.push({ depth: depth + 4, trimmed: ft });
+                if (itemCount === 1 && firstItemFlatCount === 0) {
+                  firstItemFlatCount = curItemFlatCount;
+                }
+                itemCount++;
+                curItemFlatCount = 0;
+                curItemHasDescendant = false;
+                out.push({ depth: depth + 4, trimmed: ft, lineIndex: i });
                 inItem = true;
               } else if (inItem) {
-                out.push({ depth: fd + 8, trimmed: ft });
+                if (fd === depth) {
+                  const itemBodyComplete =
+                    curItemHasDescendant ||
+                    (firstItemFlatCount > 0 ? curItemFlatCount >= firstItemFlatCount : curItemFlatCount >= 1);
+                  if (itemCount >= expectedCount && itemBodyComplete) {
+                    break;
+                  }
+                  curItemFlatCount++;
+                } else {
+                  curItemHasDescendant = true;
+                }
+                out.push({ depth: fd + 8, trimmed: ft, lineIndex: i });
               } else {
                 break;
               }
@@ -97,7 +121,7 @@ function normalizeFlatLists(rawLines: string[]): IndentedLine[] {
       }
     }
 
-    out.push({ depth, trimmed });
+    out.push({ depth, trimmed, lineIndex: i });
     i++;
   }
 
@@ -145,7 +169,9 @@ function extractMessageBlocks(validLines: IndentedLine[]): Array<{ start: number
     // SLSI block header at root depth 0 (only when not already inside an MTK/SLSI block at deeper indent)
     if (
       depth === 0 &&
-      (trimmed === 'UL-DCCH-Message' || trimmed === 'NR Radio Resource Control (RRC) protocol')
+      (trimmed === 'UL-DCCH-Message' ||
+        trimmed === 'NR Radio Resource Control (RRC) protocol' ||
+        trimmed === 'LTE Radio Resource Control (RRC) protocol')
     ) {
       if (activeStart >= 0) blocks[blocks.length - 1].end = i;
       activeStart = i;
@@ -227,7 +253,7 @@ function parseLeafScalarValue(rawValue: string | null, hasColon: boolean): unkno
 
   // Convert bit-string fields immediately to canonical "'...'B"
   if (description && RE_BIT_LENGTH.test(description)) {
-    const bitStr = hexDescToBitString(val || '0', description);
+    const bitStr = hexDescToBitString(val, description);
     if (bitStr !== null) return bitStr;
   }
 
@@ -463,13 +489,19 @@ export function parseIndentationCapa(
       }
     } else {
       // Fallback for standalone decoded PDUs without UL-DCCH-Message envelope
-      const unwrapped = unwrapAsn1TypeWrappers(rawMsg);
-      if (isPlainRecord(unwrapped)) {
-        if (isPlainRecord(rawMsg['UE-EUTRA-Capability'])) eutraList.push(unwrapped);
-        if (isPlainRecord(rawMsg['UE-NR-Capability'])) nrList.push(unwrapped);
-        if (isPlainRecord(rawMsg['UE-MRDC-Capability'])) mrdcList.push(unwrapped);
-        if (isPlainRecord(rawMsg['InterRATHandoverInfo'])) utraList.push(unwrapped);
-      }
+      const unwrapPdu = (key: string): Asn1Record | undefined => {
+        if (!isPlainRecord(rawMsg[key])) return undefined;
+        const unwrapped = unwrapAsn1TypeWrappers(rawMsg[key]);
+        return isPlainRecord(unwrapped) ? unwrapped : undefined;
+      };
+      const eutraStandalone = unwrapPdu('UE-EUTRA-Capability');
+      const nrStandalone = unwrapPdu('UE-NR-Capability');
+      const mrdcStandalone = unwrapPdu('UE-MRDC-Capability');
+      const utraStandalone = unwrapPdu('InterRATHandoverInfo');
+      if (eutraStandalone) eutraList.push(eutraStandalone);
+      if (nrStandalone) nrList.push(nrStandalone);
+      if (mrdcStandalone) mrdcList.push(mrdcStandalone);
+      if (utraStandalone) utraList.push(utraStandalone);
     }
   }
 

@@ -31,7 +31,7 @@ import type { FeatureLeaf, RatFeatures } from '../types/capaTypes';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const QAM_LABELS = ['', '64QAM', '256QAM', '1024QAM'] as const;
+const QAM_LABELS = ['16QAM', '64QAM', '256QAM', '1024QAM'] as const;
 const SCS_KEYS = ['scs-15kHz', 'scs-30kHz', 'scs-60kHz', 'scs-120kHz'] as const;
 
 // ─── Utility helpers ─────────────────────────────────────────────────────────
@@ -133,6 +133,7 @@ function compareNRBands(bandsA: NRBandInfo[], bandsB: NRBandInfo[]): BandDiff[] 
 
 function compareEutraBands(bandsA: EutraBandInfo[], bandsB: EutraBandInfo[]): BandDiff[] {
   return compareBandsGeneric(bandsA, bandsB, getEutraBandName, (a, b) => ({
+    powerClass: prop(a.powerClass, b.powerClass),
     halfDuplex: prop(a.halfDuplex, b.halfDuplex),
     dlMimo: prop(a.dlMimo, b.dlMimo),
     ulMimo: prop(a.ulMimo, b.ulMimo),
@@ -146,6 +147,23 @@ function compareUtraBands(bandsA: UtraBandInfo[], bandsB: UtraBandInfo[]): BandD
   return compareBandsGeneric(bandsA, bandsB, b => `Band-${b}`, (a, b) => ({
     powerClass: prop(a.powerClass, b.powerClass),
   }));
+}
+
+function compareMrdcBands(
+  bandsA: (NRBandInfo | EutraBandInfo)[],
+  bandsB: (NRBandInfo | EutraBandInfo)[]
+): BandDiff[] {
+  const isNrBand = (b: NRBandInfo | EutraBandInfo): b is NRBandInfo =>
+    b.displayName?.startsWith('n') || 'channelBWsDL' in b || 'channelBWsUL' in b || 'extraBws' in b;
+
+  const lteA = bandsA.filter((b): b is EutraBandInfo => !isNrBand(b));
+  const lteB = bandsB.filter((b): b is EutraBandInfo => !isNrBand(b));
+  const nrA = bandsA.filter(isNrBand);
+  const nrB = bandsB.filter(isNrBand);
+
+  const lteDiffs = compareEutraBands(lteA, lteB).map(d => ({ ...d, ratType: 'eutra' as const }));
+  const nrDiffs = compareNRBands(nrA, nrB).map(d => ({ ...d, ratType: 'nr' as const }));
+  return [...lteDiffs, ...nrDiffs];
 }
 
 // ─── Subset logic ────────────────────────────────────────────────────────────
@@ -168,16 +186,30 @@ interface ComboCache {
   /** Parameter values per band type (sorted descending for coverage check) */
   mimoMap: Record<string, number[]>;
   dlQamMap: Record<string, number[]>;
+  dlBwMap: Record<string, number[]>;
   ulQamMap: Record<string, number[]>;
   ulMimoMap: Record<string, number[]>;
+  ulBwMap: Record<string, number[]>;
+}
+
+function parseBwMhz(bw: string | undefined): number {
+  if (!bw) return 0;
+  const n = parseFloat(bw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function isFr2Band(b: BandParameter): boolean {
+  return b.ratType === 'nr' && b.band >= 257;
 }
 
 function dlBandScore(b: BandParameter): number {
-  return getBwClassCcCount(b.bandwidthClassDL) * 100 + (b.dlMimo ?? 0) * 10 + qamRank(b.dlQam);
+  const cc = b.bandwidthClassDL ? getBwClassCcCount(b.bandwidthClassDL, b.ratType, isFr2Band(b)) : 0;
+  return cc * 1000 + (b.dlMimo ?? 0) * 100 + qamRank(b.dlQam) * 10 + Math.min(9, parseBwMhz(b.dlBandwidth) / 100);
 }
 
 function ulBandScore(b: BandParameter): number {
-  return getBwClassCcCount(b.bandwidthClassUL) * 100 + (b.ulMimo ?? 1) * 10 + qamRank(b.ulQam);
+  const cc = b.bandwidthClassUL ? getBwClassCcCount(b.bandwidthClassUL, b.ratType, isFr2Band(b)) : 0;
+  return cc * 1000 + (b.ulMimo ?? 1) * 100 + qamRank(b.ulQam) * 10 + Math.min(9, parseBwMhz(b.ulBandwidth) / 100);
 }
 
 function buildComboCache(combo: BandCombination, key: string): ComboCache {
@@ -189,20 +221,30 @@ function buildComboCache(combo: BandCombination, key: string): ComboCache {
   // Track parameter values per band type (sorted descending for coverage)
   const mimoMap: Record<string, number[]> = {};
   const dlQamMap: Record<string, number[]> = {};
+  const dlBwMap: Record<string, number[]> = {};
   const ulQamMap: Record<string, number[]> = {};
   const ulMimoMap: Record<string, number[]> = {};
+  const ulBwMap: Record<string, number[]> = {};
 
   let dlCcSum = 0;
   let ulCcSum = 0;
 
   for (const b of combo.bands) {
     const groupKey = `${b.ratType}:${b.band}`;
-    (dlGroups[groupKey] ??= []).push(b);
+    const isFr2 = isFr2Band(b);
 
-    const k = `${groupKey}:${b.bandwidthClassDL ?? 'a'}`;
-    (mimoMap[k] ??= []).push(b.dlMimo ?? 0);
-    (dlQamMap[k] ??= []).push(qamRank(b.dlQam));
-    dlCcSum += getBwClassCcCount(b.bandwidthClassDL);
+    // SUL-only bands have bandwidthClassUL without bandwidthClassDL and must not contribute to DL groups/CCs.
+    if (b.bandwidthClassDL || !b.bandwidthClassUL) {
+      (dlGroups[groupKey] ??= []).push(b);
+
+      const k = `${groupKey}:${b.bandwidthClassDL ?? 'a'}`;
+      (mimoMap[k] ??= []).push(b.dlMimo ?? 0);
+      (dlQamMap[k] ??= []).push(qamRank(b.dlQam));
+      (dlBwMap[k] ??= []).push(parseBwMhz(b.dlBandwidth));
+      if (b.bandwidthClassDL) {
+        dlCcSum += getBwClassCcCount(b.bandwidthClassDL, b.ratType, isFr2);
+      }
+    }
 
     if (b.bandwidthClassUL) {
       (ulGroups[groupKey] ??= []).push(b);
@@ -212,7 +254,8 @@ function buildComboCache(combo: BandCombination, key: string): ComboCache {
       const uk = `${groupKey}:${b.bandwidthClassUL}`;
       (ulQamMap[uk] ??= []).push(qamRank(b.ulQam));
       (ulMimoMap[uk] ??= []).push(b.ulMimo ?? 1);
-      ulCcSum += getBwClassCcCount(b.bandwidthClassUL);
+      (ulBwMap[uk] ??= []).push(parseBwMhz(b.ulBandwidth));
+      ulCcSum += getBwClassCcCount(b.bandwidthClassUL, b.ratType, isFr2);
     }
   }
 
@@ -234,7 +277,7 @@ function buildComboCache(combo: BandCombination, key: string): ComboCache {
   }
 
   // Sort parameter arrays descending only when multiple CCs share a band/class key
-  const allMaps = [mimoMap, dlQamMap, ulQamMap, ulMimoMap];
+  const allMaps = [mimoMap, dlQamMap, dlBwMap, ulQamMap, ulMimoMap, ulBwMap];
   for (const m of allMaps) {
     for (const k of Object.keys(m)) {
       if (m[k].length > 1) m[k].sort((x, y) => y - x);
@@ -258,22 +301,43 @@ function buildComboCache(combo: BandCombination, key: string): ComboCache {
     ulLevel,
     mimoMap,
     dlQamMap,
+    dlBwMap,
     ulQamMap,
     ulMimoMap,
+    ulBwMap,
   };
 }
 
 const CONTIGUOUS_BW_CHAIN = ['a', 'c', 'd', 'e', 'f', 'g', 'h', 'i'] as const;
+const FR2_FALLBACK_CHAINS = [
+  ['a', 'd', 'e', 'f'],
+  ['a', 'g', 'h', 'i', 'j', 'k', 'l', 'm'],
+  ['a', 'q'],
+  ['a', 'b'],
+  ['a', 'c'],
+] as const;
 
 /**
- * 3GPP TS 36.101 Table 5.6A.1-1 / TS 36.306 §4.3.5.12 / TS 38.306 §4.2.7.10:
- * A parent CA bandwidth class covers an equal or smaller contiguous fallback class
- * (e.g. c -> a, d -> c -> a, b -> a), never a larger one (a cannot cover c or b).
+ * 3GPP TS 36.101 Table 5.6A.1-1 / TS 36.306 §4.3.5.12 / TS 38.306 §4.2.7.10 / TS 38.101-2 Table 5.3A.4-1:
+ * A parent CA bandwidth class covers an equal or smaller contiguous fallback class within the same
+ * fallback group (e.g. c -> a, FR2 m -> g -> a), never a larger one or a disjoint FR2 group (d vs g).
  */
-function bwClassCovers(smallCls: string | undefined, largeCls: string | undefined): boolean {
+function bwClassCovers(
+  smallCls: string | undefined,
+  largeCls: string | undefined,
+  ratType?: 'nr' | 'eutra',
+  isFr2 = false
+): boolean {
   const s = (smallCls || 'a').toLowerCase();
   const l = (largeCls || 'a').toLowerCase();
   if (s === l) return true;
+  if (ratType === 'nr' && isFr2) {
+    return FR2_FALLBACK_CHAINS.some((chain) => {
+      const sIdx = chain.indexOf(s as never);
+      const lIdx = chain.indexOf(l as never);
+      return sIdx >= 0 && lIdx >= 0 && lIdx >= sIdx;
+    });
+  }
   if (s === 'a' && l === 'b') return true;
   const sIdx = CONTIGUOUS_BW_CHAIN.indexOf(s as (typeof CONTIGUOUS_BW_CHAIN)[number]);
   const lIdx = CONTIGUOUS_BW_CHAIN.indexOf(l as (typeof CONTIGUOUS_BW_CHAIN)[number]);
@@ -293,12 +357,14 @@ function dlEntryCovers(
     if ((s.bandwidthClassDL || 'a').toLowerCase() !== (l.bandwidthClassDL || 'a').toLowerCase()) {
       return false;
     }
-  } else if (!bwClassCovers(s.bandwidthClassDL, l.bandwidthClassDL)) {
+  } else if (!bwClassCovers(s.bandwidthClassDL, l.bandwidthClassDL, s.ratType, isFr2Band(s))) {
     return false;
   }
 
   if (showMimo && (l.dlMimo ?? 0) < (s.dlMimo ?? 0)) return false;
   if (showQam && qamRank(l.dlQam) < qamRank(s.dlQam)) return false;
+  const sBw = parseBwMhz(s.dlBandwidth);
+  if (sBw > 0 && parseBwMhz(l.dlBandwidth) < sBw) return false;
   return true;
 }
 
@@ -316,12 +382,14 @@ function ulEntryCovers(
     if (s.bandwidthClassUL.toLowerCase() !== l.bandwidthClassUL.toLowerCase()) {
       return false;
     }
-  } else if (!bwClassCovers(s.bandwidthClassUL, l.bandwidthClassUL)) {
+  } else if (!bwClassCovers(s.bandwidthClassUL, l.bandwidthClassUL, s.ratType, isFr2Band(s))) {
     return false;
   }
 
   if (showMimo && (l.ulMimo ?? 1) < (s.ulMimo ?? 1)) return false;
   if (showQam && qamRank(l.ulQam) < qamRank(s.ulQam)) return false;
+  const sBw = parseBwMhz(s.ulBandwidth);
+  if (sBw > 0 && parseBwMhz(l.ulBandwidth) < sBw) return false;
   return true;
 }
 
@@ -445,6 +513,9 @@ function collectCoverageParamNotes(
       const lLabel = QAM_LABELS[qamRank(l.dlQam)] || String(l.dlQam ?? '');
       notes.push(`${prefix} DL-QAM: ${sLabel}→${lLabel}`);
     }
+    if (parseBwMhz(l.dlBandwidth) > parseBwMhz(s.dlBandwidth) && l.dlBandwidth) {
+      notes.push(`${prefix} DL-BW: ${s.dlBandwidth ?? '—'}→${l.dlBandwidth}`);
+    }
   }
 
   for (const { s, l } of match.ulPairs) {
@@ -462,6 +533,9 @@ function collectCoverageParamNotes(
       const sLabel = QAM_LABELS[qamRank(s.ulQam)] || String(s.ulQam ?? '64QAM');
       const lLabel = QAM_LABELS[qamRank(l.ulQam)] || String(l.ulQam ?? '');
       notes.push(`${prefix} UL-QAM: ${sLabel}→${lLabel}`);
+    }
+    if (parseBwMhz(l.ulBandwidth) > parseBwMhz(s.ulBandwidth) && l.ulBandwidth) {
+      notes.push(`${prefix} UL-BW: ${s.ulBandwidth ?? '—'}→${l.ulBandwidth}`);
     }
   }
 
@@ -517,7 +591,7 @@ function isUlCoveredCombo(
 
   // O(1) fingerprint check — return immediately if band multisets differ
   if (fewerCache.bandFingerprint !== moreCache.bandFingerprint) return { isCovered: false, paramNotes: [] };
-  if (fewerCache.combo.bands.length !== moreCache.combo.bands.length) return { isCovered: false, paramNotes: [] };
+  if (fewerCache.combo.bands.length > moreCache.combo.bands.length) return { isCovered: false, paramNotes: [] };
 
   const fewer = fewerCache.ulCounts;
   const more = moreCache.ulCounts;
@@ -553,6 +627,8 @@ function qamRank(q: string | undefined): number {
     case 'qam256':  return 2;
     case '64qam':
     case 'qam64':   return 1;
+    case '16qam':
+    case 'qam16':   return 0;
     default:        return 1; // undefined = 64QAM default
   }
 }
@@ -569,23 +645,6 @@ function mimoCovers(weakerMimos: number[], strongerMimos: number[]): boolean {
   return true;
 }
 
-/**
- * Parameter dominance coverage (TS 38.214 §5.2.2.1 / TS 36.213 §7.1.3 / TS 36.306 §4.3.9.3)
- *
- * With the same band set and identical UL BW class configuration,
- * DL MIMO / DL QAM / UL QAM parameters are ≥ in all bands and > in at least one
- * covers the lower capability combo.
- *
- * Coverage-based MIMO comparison:
- * - Collect MIMO values for all CCs of the same band type (e.g., "eutra:7:a")
- * - Sort in descending order and check stronger ≥ weaker by index
- * - MIMO 4 covers MIMO 2 (backward compatible)
- *
- * 3GPP Basis:
- * - No UL/DL 256QAM reporting = supports only 64QAM (mandatory minimum, TS 36.101)
- * - 256QAM UE can always operate in 64QAM networks (backward compatible)
- * - Therefore ulQam="256QAM" ⊇ ulQam=undefined (64QAM default)
- */
 function isParamCoveredCombo(
   weakerCache: ComboCache,
   strongerCache: ComboCache,
@@ -609,12 +668,22 @@ function isParamCoveredCombo(
     return { isCovered: false, paramNotes: [] };
   }
 
-  // Multiset parameter coverage check (sorted array per band type)
-  const mapsToCompare = [
-    { weaker: weakerCache.mimoMap, stronger: strongerCache.mimoMap, label: 'DL-MIMO' },
-    { weaker: weakerCache.dlQamMap, stronger: strongerCache.dlQamMap, label: 'DL-QAM' },
-    { weaker: weakerCache.ulQamMap, stronger: strongerCache.ulQamMap, label: 'UL-QAM' },
-    { weaker: weakerCache.ulMimoMap, stronger: strongerCache.ulMimoMap, label: 'UL-MIMO' },
+  const { showQam = true, showMimo = true } = opts;
+  const mapsToCompare: Array<{ weaker: Record<string, number[]>; stronger: Record<string, number[]>; label: string }> = [
+    ...(showMimo
+      ? [
+          { weaker: weakerCache.mimoMap, stronger: strongerCache.mimoMap, label: 'DL-MIMO' },
+          { weaker: weakerCache.ulMimoMap, stronger: strongerCache.ulMimoMap, label: 'UL-MIMO' },
+        ]
+      : []),
+    ...(showQam
+      ? [
+          { weaker: weakerCache.dlQamMap, stronger: strongerCache.dlQamMap, label: 'DL-QAM' },
+          { weaker: weakerCache.ulQamMap, stronger: strongerCache.ulQamMap, label: 'UL-QAM' },
+        ]
+      : []),
+    { weaker: weakerCache.dlBwMap, stronger: strongerCache.dlBwMap, label: 'DL-BW' },
+    { weaker: weakerCache.ulBwMap, stronger: strongerCache.ulBwMap, label: 'UL-BW' },
   ];
 
   for (const { weaker, stronger } of mapsToCompare) {
@@ -647,9 +716,14 @@ function isParamCoveredCombo(
           if (label.includes('QAM')) {
             sVal = QAM_LABELS[strongerVals[i]] || sVal;
             wVal = QAM_LABELS[weakerVals[i]] || wVal;
+            paramNotes.push(`${prefix}(${bwClass}) ${label}: ${sVal} covers ${wVal}`);
+          } else if (label.includes('BW')) {
+            sVal = `${strongerVals[i]}MHz`;
+            wVal = weakerVals[i] > 0 ? `${weakerVals[i]}MHz` : '—';
+            paramNotes.push(`${prefix}(${bwClass}) ${label}: ${sVal} covers ${wVal}`);
+          } else {
+            paramNotes.push(`${prefix}(${bwClass}) ${label}: ${sVal} covers ${wVal}`);
           }
-          
-          paramNotes.push(`${prefix}(${bwClass}) ${label}: ${sVal} covers ${wVal}`);
         }
       }
     }
@@ -662,22 +736,37 @@ function isParamCoveredCombo(
 
 // ─── Band combination comparison ─────────────────────────────────────────────
 
+function sortBandParamsDeterministically(params: BandParameter[]): BandParameter[] {
+  return [...params].sort((a, b) => {
+    if (a.ratType !== b.ratType) return a.ratType === 'eutra' ? -1 : 1;
+    if (a.band !== b.band) return a.band - b.band;
+    const scoreDiff = dlBandScore(b) + ulBandScore(b) - (dlBandScore(a) + ulBandScore(a));
+    if (scoreDiff !== 0) return scoreDiff;
+    return (b.bandwidthClassUL ?? '').localeCompare(a.bandwidthClassUL ?? '');
+  });
+}
+
 function compareOnePairBandParams(
   paramsA: BandParameter[],
   paramsB: BandParameter[]
 ): BandParamDiff[] {
+  const sortedA = sortBandParamsDeterministically(paramsA);
+  const sortedB = sortBandParamsDeterministically(paramsB);
   const diffs: BandParamDiff[] = [];
-  // Match by ratType + band (index-order fallback for duplicates)
   const usedB = new Set<number>();
-  for (const bpA of paramsA) {
-    const matchIdx = paramsB.findIndex(
+  for (const bpA of sortedA) {
+    const matchIdx = sortedB.findIndex(
       (bpB, i) => !usedB.has(i) && bpB.ratType === bpA.ratType && bpB.band === bpA.band
     );
-    const bpB = matchIdx >= 0 ? paramsB[matchIdx] : undefined;
+    const bpB = matchIdx >= 0 ? sortedB[matchIdx] : undefined;
     if (matchIdx >= 0) usedB.add(matchIdx);
 
     const prefix = bpA.ratType === 'nr' ? 'n' : 'B';
     const displayName = `${prefix}${bpA.band}`;
+    const ulMimoA = bpA.bandwidthClassUL ? (bpA.ulMimo ?? 1) : undefined;
+    const ulMimoB = bpB?.bandwidthClassUL ? (bpB.ulMimo ?? 1) : undefined;
+    const ulQamA = bpA.bandwidthClassUL ? bpA.ulQam : undefined;
+    const ulQamB = bpB?.bandwidthClassUL ? bpB.ulQam : undefined;
     diffs.push({
       band: bpA.band,
       ratType: bpA.ratType,
@@ -685,9 +774,9 @@ function compareOnePairBandParams(
       bandwidthClassDL: prop(bpA.bandwidthClassDL, bpB?.bandwidthClassDL),
       bandwidthClassUL: prop(bpA.bandwidthClassUL, bpB?.bandwidthClassUL),
       dlMimo: prop(bpA.dlMimo, bpB?.dlMimo),
-      ulMimo: prop(bpA.ulMimo, bpB?.ulMimo),
+      ulMimo: prop(ulMimoA, ulMimoB),
       dlQam: prop(bpA.dlQam, bpB?.dlQam),
-      ulQam: prop(bpA.ulQam, bpB?.ulQam),
+      ulQam: prop(ulQamA, ulQamB),
     });
   }
   return diffs;
@@ -744,15 +833,13 @@ function compareComboLevelParams(a: BandCombination, b: BandCombination): string
 }
 
 function buildCoverageDirection(
-  srcCombos: BandCombination[],
-  _dstCombos: BandCombination[],
   comboDiffs: ComboDiff[],
   srcSide: 'a' | 'b'
 ): CoverageDirection {
   const coveredStatus: ComboMatchStatus = srcSide === 'a' ? 'a-only-covered' : 'b-only-covered';
   const uniqueStatus: ComboMatchStatus = srcSide === 'a' ? 'a-only-unique' : 'b-only-unique';
 
-  // Single-pass counting
+  // Single-pass counting over deduplicated combo keys
   let exactSame = 0, exactChanged = 0, covered = 0, unique = 0;
   for (const d of comboDiffs) {
     if (d.status === 'exact-same') exactSame++;
@@ -761,12 +848,23 @@ function buildCoverageDirection(
     else if (d.status === uniqueStatus) unique++;
   }
 
-  const total = srcCombos.length;
+  const total = exactSame + exactChanged + covered + unique;
   const coverageRate = total === 0
     ? 1
     : (exactSame + exactChanged + covered) / total;
 
   return { exactMatch: exactSame, exactChanged, coveredBySuperset: covered, trulyUnique: unique, total, coverageRate };
+}
+
+function comboCapabilityScore(c: BandCombination): number {
+  return c.bands.reduce((acc, bp) => acc + dlBandScore(bp) + (bp.bandwidthClassUL ? ulBandScore(bp) : 0), 0);
+}
+
+function insertStrongerCombo(map: Map<string, BandCombination>, key: string, c: BandCombination): void {
+  const existing = map.get(key);
+  if (!existing || comboCapabilityScore(c) > comboCapabilityScore(existing)) {
+    map.set(key, c);
+  }
 }
 
 function indexCandidates(caches: Iterable<ComboCache>): {
@@ -804,8 +902,8 @@ function compareCombos(
   const mapA = new Map<string, BandCombination>();
   const mapB = new Map<string, BandCombination>();
 
-  for (const c of combosA) mapA.set(getComboKey(c), c);
-  for (const c of combosB) mapB.set(getComboKey(c), c);
+  for (const c of combosA) insertStrongerCombo(mapA, getComboKey(c), c);
+  for (const c of combosB) insertStrongerCombo(mapB, getComboKey(c), c);
 
   // Pre-build caches once per combo — avoids O(n²) recomputation in coverage loops
   const cacheA = new Map<string, ComboCache>();
@@ -827,7 +925,7 @@ function compareCombos(
       
       const bandParamChanged = bandParamDiffs.some(d =>
         [d.bandwidthClassDL, d.bandwidthClassUL, d.dlMimo, d.ulMimo, d.dlQam, d.ulQam]
-          .some(p => p?.status === 'changed')
+          .some(p => p && p.status !== 'same')
       );
 
       const notes: string[] = [...comboLevelNotes];
@@ -842,7 +940,7 @@ function compareCombos(
             { v: bd.ulQam, l: 'UL-QAM' },
           ];
           for (const p of props) {
-            if (p.v?.status === 'changed') {
+            if (p.v && p.v.status !== 'same') {
               notes.push(`${bd.displayName} ${p.l}: ${valDisplay(p.v.a)}→${valDisplay(p.v.b)}`);
             }
           }
@@ -950,8 +1048,8 @@ function compareCombos(
   }
 
   // Layer 3: coverage scoring
-  const aToB = buildCoverageDirection(combosA, combosB, diffs, 'a');
-  const bToA = buildCoverageDirection(combosB, combosA, diffs, 'b');
+  const aToB = buildCoverageDirection(diffs, 'a');
+  const bToA = buildCoverageDirection(diffs, 'b');
 
   return { comboDiffs: diffs, coverage: { aToB, bToA } };
 }
@@ -972,8 +1070,13 @@ function compareRat(
   let bandDiffs: BandDiff[];
   if (ratType === 'nr') {
     bandDiffs = compareNRBands(bandsA as NRBandInfo[], bandsB as NRBandInfo[]);
-  } else if (ratType === 'eutra' || ratType === 'eutra-nr') {
+  } else if (ratType === 'eutra') {
     bandDiffs = compareEutraBands(bandsA as EutraBandInfo[], bandsB as EutraBandInfo[]);
+  } else if (ratType === 'eutra-nr') {
+    bandDiffs = compareMrdcBands(
+      bandsA as (NRBandInfo | EutraBandInfo)[],
+      bandsB as (NRBandInfo | EutraBandInfo)[]
+    );
   } else {
     bandDiffs = compareUtraBands(bandsA as UtraBandInfo[], bandsB as UtraBandInfo[]);
   }
@@ -1129,9 +1232,9 @@ function compareFeatureLeaves(
       diff.status = 'b-only';
     } else if (!b) {
       diff.status = 'a-only';
-    } else if (ref.kind === 'stringList' || ref.kind === 'numberList') {
-      const aArr = ((a?.value as any[]) ?? []).map(String);
-      const bArr = ((b?.value as any[]) ?? []).map(String);
+    } else if ((ref.kind === 'stringList' || ref.kind === 'numberList') && Array.isArray(a.value) && Array.isArray(b.value)) {
+      const aArr = a.value.map(String);
+      const bArr = b.value.map(String);
       const aSet = new Set(aArr);
       const bSet = new Set(bArr);
       const common = aArr.filter(v => bSet.has(v));
@@ -1141,8 +1244,7 @@ function compareFeatureLeaves(
       diff.stringListDiff = slDiff;
       diff.status = (onlyInA.length === 0 && onlyInB.length === 0) ? 'same' : 'different';
     } else {
-      // For bool/presence/fgiBit: exact compare
-      // For number/enum: exact compare (higher category shown in UI)
+      // For bool/presence/fgiBit/scalar/mismatched kinds: exact structural compare
       diff.status = fastEqual(a.value, b.value) ? 'same' : 'different';
     }
 
@@ -1151,7 +1253,7 @@ function compareFeatureLeaves(
 
   // Sort: major → middle → bit (FGI) or leaf
   // FGI middles have a canonical order that differs from alphabetical
-  const FGI_MIDDLE_ORDER = ['FGI-Rel9', 'FGI-Rel9-Add', 'FGI-Rel10'];
+  const FGI_MIDDLE_ORDER = ['FGI-Rel9', 'FGI-Rel9-Add', 'FGI-Rel10', 'FGI-Rel10-FDD', 'FGI-Rel10-TDD'];
   const fgiMiddleRank = (m: string) => {
     const i = FGI_MIDDLE_ORDER.indexOf(m);
     return i === -1 ? 99 : i;

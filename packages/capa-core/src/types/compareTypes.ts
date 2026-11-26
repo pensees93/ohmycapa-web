@@ -33,6 +33,7 @@ export interface ChannelBWDiff {
 
 export interface BandDiff {
   band: number;
+  ratType?: 'nr' | 'eutra' | 'utra';
   displayName: string;
   status: DiffStatus;
   powerClass?: PropertyDiff<string>;

@@ -12,10 +12,12 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import { buildParseErrorIssueReport, type DeviceState } from '@ohmycapa/capa-core';
+import { DEVICE_COLOR, STATUS_COLOR, getWorkbenchSurface } from '../constants/statusMeta';
+import { extractFilesFromDataTransfer } from '../utils/fileDropUtils';
 
 // ─── Parse error alert ───────────────────────────────────────────────────────
 
-const FORMAT_HINT = 'Please use original MTK / SLSI / QUALCOMM OTA logs (.txt) or CommonCapaJson v2.0 (.json).';
+const FORMAT_HINT = 'Please use original MTK / SLSI / QUALCOMM OTA logs (.txt/.log) or CommonCapaJson v2.0 (.json).';
 
 function isUnknownFormatError(error: string): boolean {
   return (
@@ -36,14 +38,14 @@ function ParseErrorAlert({
   onOpenUrl?: (url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [reported, setReported] = useState(false);
+  const [reportState, setReportState] = useState<'idle' | 'opened' | 'copy_required'>('idle');
   const isFormatError = isUnknownFormatError(error);
 
   const handleReportIssue = () => {
     const report = buildParseErrorIssueReport(fileName, error);
     navigator.clipboard?.writeText(report.markdownBody).catch(() => {});
-    setReported(true);
-    setTimeout(() => setReported(false), 2500);
+    setReportState(report.requiresCopy ? 'copy_required' : 'opened');
+    setTimeout(() => setReportState('idle'), 3500);
     if (onOpenUrl) {
       onOpenUrl(report.issueUrl);
     } else if (typeof window !== 'undefined') {
@@ -56,7 +58,9 @@ function ParseErrorAlert({
       severity="error"
       icon={<ErrorIcon sx={{ fontSize: 16, mt: 0.1 }} />}
       sx={{
-        mt: 0.75, py: 0.5, px: 1,
+        mt: 0.75,
+        py: 0.5,
+        px: 1,
         fontSize: '0.68rem',
         alignItems: 'flex-start',
         '& .MuiAlert-icon': { py: 0.25 },
@@ -95,7 +99,11 @@ function ParseErrorAlert({
                 minWidth: 0,
               }}
             >
-              {reported ? 'Opening GitHub…' : 'Report to GitHub'}
+              {reportState === 'copy_required'
+                ? 'Body copied — paste in GitHub'
+                : reportState === 'opened'
+                  ? 'Opening GitHub…'
+                  : 'Report to GitHub'}
             </Button>
           </Tooltip>
           <IconButton
@@ -112,11 +120,16 @@ function ParseErrorAlert({
         <Box
           component="pre"
           sx={{
-            mt: 0.5, p: 0.75, borderRadius: 0.5,
+            mt: 0.5,
+            p: 0.75,
+            borderRadius: 0.5,
             bgcolor: 'rgba(0,0,0,0.1)',
-            fontSize: '0.6rem', fontFamily: 'monospace',
-            whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-            maxHeight: 80, overflowY: 'auto',
+            fontSize: '0.6rem',
+            fontFamily: 'monospace',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+            maxHeight: 80,
+            overflowY: 'auto',
             m: 0,
           }}
         >
@@ -135,97 +148,64 @@ const VENDOR_COLORS: Record<string, string> = {
 };
 
 const RAT_LABELS: Record<string, string> = {
-  nr: 'NR', eutra: 'LTE', 'eutra-nr': 'MRDC', utra: 'UTRA',
+  nr: 'NR',
+  eutra: 'LTE',
+  'eutra-nr': 'MRDC',
+  utra: 'UTRA',
 };
 
 const getDisplayName = (fileName: string): string =>
   /^clipboard_\d+\.txt$/.test(fileName) ? 'Clipboard' : fileName;
 
 const getSideColor = (side: 'A' | 'B'): string =>
-  side === 'A' ? '#2196F3' : '#4DB6AC';
+  side === 'A' ? DEVICE_COLOR.deviceA : DEVICE_COLOR.deviceB;
 
 const getSideColorLight = (side: 'A' | 'B'): string =>
-  side === 'A' ? 'rgba(33,150,243,0.06)' : 'rgba(77,182,172,0.06)';
+  side === 'A' ? 'rgba(33,150,243,0.08)' : 'rgba(20,184,166,0.08)';
 
-// ─── File scanning utilities ──────────────────────────────────────────────────
-async function scanEntry(entry: any, txtFiles: File[]): Promise<void> {
-  if (entry.isFile) {
-    const name: string = (entry.name ?? '').toLowerCase();
-    if (name.endsWith('.txt') || name.endsWith('.json')) {
-      const file = await new Promise<File>((res, rej) => entry.file(res, rej));
-      txtFiles.push(file);
-    }
-  } else if (entry.isDirectory) {
-    const reader = entry.createReader();
-    const entries = await readAllEntries(reader);
-    for (const child of entries) await scanEntry(child, txtFiles);
-  }
-}
-
-async function readAllEntries(reader: any): Promise<any[]> {
-  const all: any[] = [];
-  let chunk: any[];
-  do {
-    chunk = await new Promise<any[]>((res, rej) => reader.readEntries(res, rej));
-    all.push(...chunk);
-  } while (chunk.length > 0);
-  return all;
-}
-
-interface CapaDropzoneProps {
+export interface CapaDropzoneProps {
   side: 'A' | 'B';
   device: DeviceState;
   onFilesDrop: (files: File[]) => void;
   onRemoveFile: (name: string) => void;
-  onNameChange: (name: string) => void;
   onClear: () => void;
   onOpenUrl?: (url: string) => void;
+  compact?: boolean;
 }
 
 export const CapaDropzone: React.FC<CapaDropzoneProps> = ({
-  side, device, onFilesDrop, onRemoveFile, onClear, onOpenUrl,
+  side, device, onFilesDrop, onRemoveFile, onClear, onOpenUrl, compact = false,
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
+  const surface = getWorkbenchSurface(isDark);
   const [isDragActive, setIsDragActive] = useState(false);
   const lastPastedRef = useRef<{ text: string; name: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleDragEnter = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setIsDragActive(true); };
   const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setIsDragActive(false); };
   const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); if (!isDragActive) setIsDragActive(true); };
 
   const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
+    e.stopPropagation();
     setIsDragActive(false);
     // Tauri handles file drops natively via onDragDropEvent in CapaComparePage
-    if (typeof (window as any).__TAURI_INTERNALS__ !== 'undefined') return;
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) return;
 
-    const items = Array.from(e.dataTransfer.items ?? []);
-    const txtFiles: File[] = [];
-    const entries = items.map(item => item.webkitGetAsEntry?.()).filter(Boolean);
-
-    if (entries.length > 0) {
-      await Promise.all(entries.map(entry => scanEntry(entry, txtFiles)));
-    } else {
-      // Fallback for WebView2 (Tauri) where webkitGetAsEntry may return null
-      Array.from(e.dataTransfer.files ?? [])
-        .filter(f => { const n = f.name.toLowerCase(); return n.endsWith('.txt') || n.endsWith('.json'); })
-        .forEach(f => txtFiles.push(f));
-    }
-
-    if (txtFiles.length > 0) onFilesDrop(txtFiles);
+    const files = await extractFilesFromDataTransfer(e.dataTransfer);
+    if (files.length > 0) onFilesDrop(files);
   };
 
   const openFileBrowse = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = true;
-    input.accept = '.txt,.json';
-    input.onchange = () => {
-      const files = Array.from(input.files ?? []);
-      if (files.length > 0) onFilesDrop(files);
-    };
-    input.click();
+    fileInputRef.current?.click();
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (files.length > 0) onFilesDrop(files);
   };
 
   const handleClick = async () => {
@@ -253,27 +233,53 @@ export const CapaDropzone: React.FC<CapaDropzoneProps> = ({
   const vendor = device.normalized?.meta.vendor;
   const detectedRats = device.normalized?.meta.detectedRats ?? [];
   const vendorColor = vendor ? VENDOR_COLORS[vendor] : undefined;
+  const sideColor = getSideColor(side);
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: compact ? 0.75 : 1, minWidth: 0 }}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".txt,.log,.json"
+        style={{ display: 'none' }}
+        aria-label={`Upload Device ${side} CAPA files`}
+        data-testid={`capa-file-input-${side.toLowerCase()}`}
+        onChange={handleFileInputChange}
+      />
       {/* Header row */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Typography
-          variant="caption"
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+        <Box
           sx={{
-            fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
-            color: getSideColor(side), fontSize: '0.72rem',
+            px: 0.65,
+            py: 0.1,
+            borderRadius: 1,
+            bgcolor: `${sideColor}18`,
+            border: `1px solid ${sideColor}44`,
           }}
         >
-          Device {side}
-        </Typography>
+          <Typography
+            variant="caption"
+            sx={{
+              fontWeight: 800,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color: sideColor,
+              fontSize: '0.68rem',
+            }}
+          >
+            Device {side}
+          </Typography>
+        </Box>
         {vendor && vendor !== 'UNKNOWN' && (
           <Chip
             label={vendor}
             size="small"
             sx={{
-              height: 18, fontSize: '0.65rem', fontWeight: 700,
-              bgcolor: vendorColor ? `${vendorColor}22` : undefined,
+              height: 18,
+              fontSize: '0.64rem',
+              fontWeight: 700,
+              bgcolor: vendorColor ? `${vendorColor}20` : undefined,
               color: vendorColor,
               border: `1px solid ${vendorColor}55`,
             }}
@@ -285,14 +291,16 @@ export const CapaDropzone: React.FC<CapaDropzoneProps> = ({
             label={RAT_LABELS[rat] ?? rat}
             size="small"
             sx={{
-              height: 16, fontSize: '0.6rem',
-              bgcolor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+              height: 16,
+              fontSize: '0.58rem',
+              fontWeight: 600,
+              bgcolor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.05)',
             }}
           />
         ))}
         {device.files.length > 0 && (
-          <Tooltip title="Clear">
-            <IconButton size="small" onClick={onClear} sx={{ ml: 'auto', p: 0.25 }}>
+          <Tooltip title="Clear device">
+            <IconButton size="small" onClick={onClear} sx={{ ml: 'auto', p: 0.25 }} aria-label={`Clear Device ${side}`}>
               <CloseIcon sx={{ fontSize: 14 }} />
             </IconButton>
           </Tooltip>
@@ -308,40 +316,46 @@ export const CapaDropzone: React.FC<CapaDropzoneProps> = ({
         onDrop={handleDrop}
         onClick={handleClick}
         sx={{
-          px: 1.5, py: 0, height: 45,
-          display: 'flex', flexDirection: 'row',
-          alignItems: 'center', justifyContent: 'center', gap: 0.75,
-          bgcolor: isDragActive
-            ? getSideColorLight(side)
-            : (isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)'),
-          borderColor: isDragActive
-            ? getSideColor(side)
-            : 'divider',
-          borderStyle: 'dashed', borderWidth: 1, borderRadius: 2,
+          px: 1.5,
+          py: 0,
+          height: compact ? 42 : 52,
+          display: 'flex',
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 0.75,
+          bgcolor: isDragActive ? getSideColorLight(side) : surface.subtleBg,
+          borderColor: isDragActive ? sideColor : surface.borderStrong,
+          borderStyle: 'dashed',
+          borderWidth: 1,
+          borderRadius: 1.5,
           cursor: 'pointer',
-          transition: 'all 0.2s ease',
-          '&:hover': { borderColor: getSideColor(side), bgcolor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' },
+          transition: 'all 0.15s ease',
+          '&:hover': { borderColor: sideColor, bgcolor: getSideColorLight(side) },
         }}
       >
         <CloudUploadIcon
           sx={{
             fontSize: 16,
-            color: isDragActive ? getSideColor(side) : 'text.disabled',
-            transition: 'color 0.2s',
+            color: isDragActive ? sideColor : 'text.disabled',
+            transition: 'color 0.15s',
           }}
         />
-        <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.68rem' }}>
-          Drop or click to paste ·{' '}
+        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem', textAlign: 'center' }}>
+          Drop files or click to paste ·{' '}
           <Typography
             component="span"
-            onClick={(e) => { e.stopPropagation(); openFileBrowse(); }}
+            onClick={e => { e.stopPropagation(); openFileBrowse(); }}
             sx={{
-              fontSize: '0.68rem', color: 'text.secondary',
-              textDecoration: 'underline', cursor: 'pointer',
-              '&:hover': { color: 'text.primary' },
+              fontSize: '0.68rem',
+              fontWeight: 700,
+              color: sideColor,
+              textDecoration: 'underline',
+              cursor: 'pointer',
+              '&:hover': { opacity: 0.85 },
             }}
           >
-            File Open
+            Browse
           </Typography>
         </Typography>
       </Paper>
@@ -353,28 +367,33 @@ export const CapaDropzone: React.FC<CapaDropzoneProps> = ({
         <Box>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: device.files.some(f => f.error) ? 0.75 : 0 }}>
             {device.files.map(pf => (
-              <Tooltip key={pf.file.name} title={pf.error ? `❌ ${pf.error}` : pf.status === 'parsing' ? 'Parsing...' : '✓ Done'} placement="top">
+              <Tooltip
+                key={pf.file.name}
+                title={pf.error ? `❌ ${pf.error}` : pf.status === 'parsing' ? 'Parsing...' : '✓ Done'}
+                placement="top"
+              >
                 <Chip
                   label={getDisplayName(pf.file.name)}
                   size="small"
                   icon={
                     pf.status === 'parsing' ? <HourglassEmptyIcon sx={{ fontSize: '0.75rem !important' }} /> :
-                    pf.status === 'error' ? <ErrorIcon sx={{ fontSize: '0.75rem !important', color: '#ef4444 !important' }} /> :
-                    <CheckCircleIcon sx={{ fontSize: '0.75rem !important', color: '#10b981 !important' }} />
+                      pf.status === 'error' ? <ErrorIcon sx={{ fontSize: '0.75rem !important', color: `${STATUS_COLOR.red} !important` }} /> :
+                        <CheckCircleIcon sx={{ fontSize: '0.75rem !important', color: `${STATUS_COLOR.green} !important` }} />
                   }
                   onDelete={() => onRemoveFile(pf.file.name)}
                   deleteIcon={<CloseIcon sx={{ fontSize: '0.75rem !important' }} />}
                   sx={{
-                    height: 22, fontSize: '0.68rem', maxWidth: 240,
+                    height: 22,
+                    fontSize: '0.68rem',
+                    maxWidth: 240,
                     bgcolor: pf.status === 'error'
                       ? 'rgba(239,68,68,0.08)'
-                      : (isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'),
+                      : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.05)'),
                   }}
                 />
               </Tooltip>
             ))}
           </Box>
-          {/* Error alerts */}
           {device.files.filter(f => f.error).map(f => (
             <ParseErrorAlert key={f.file.name} fileName={f.file.name} error={f.error ?? ''} onOpenUrl={onOpenUrl} />
           ))}

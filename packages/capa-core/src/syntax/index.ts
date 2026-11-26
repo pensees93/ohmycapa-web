@@ -39,7 +39,7 @@ export function parseCapaText(content: string, fileName?: string): CanonicalAsn1
  * Parse and validate a CommonCapaJson v2.0 JSON string.
  */
 export function parseCommonCapaJson(content: string): CommonCapaJson {
-  const parsed = JSON.parse(content) as CommonCapaJson;
+  const parsed = JSON.parse(content.trim()) as CommonCapaJson;
   if (!parsed || typeof parsed !== 'object' || parsed.schemaVersion !== '2.0' || !parsed.rats || !parsed.meta) {
     throw new Error('Invalid CommonCapaJson v2.0 document.');
   }

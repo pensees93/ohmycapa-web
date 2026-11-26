@@ -1,5 +1,6 @@
 import { Box, Tooltip } from '@mui/material';
 import type { PropertyDiff } from '@ohmycapa/capa-core';
+import { DEVICE_COLOR, MONO_FONT_FAMILY, STATUS_COLOR } from '../constants/statusMeta';
 
 interface SplitCellProps<V> {
   diff: PropertyDiff<V> | undefined;
@@ -8,17 +9,17 @@ interface SplitCellProps<V> {
   emptyLabel?: string;
 }
 
-const STATUS_COLORS = {
-  same: { bg: 'transparent', text: 'text.primary' },
-  changed: { bg: 'rgba(245,158,11,0.12)', text: '#d97706' },
-  'a-only': { bg: 'rgba(239,68,68,0.1)', text: '#dc2626' },
-  'b-only': { bg: 'rgba(16,185,129,0.1)', text: '#059669' },
-};
+const STATUS_STYLE = {
+  same: { bg: 'transparent', text: 'text.secondary' },
+  changed: { bg: 'rgba(245,158,11,0.10)', text: STATUS_COLOR.amber },
+  'a-only': { bg: 'rgba(33,150,243,0.10)', text: DEVICE_COLOR.deviceA },
+  'b-only': { bg: 'rgba(20,184,166,0.10)', text: DEVICE_COLOR.deviceB },
+} as const;
 
 export function SplitCell<V>({ diff, format, emptyLabel = '--' }: SplitCellProps<V>) {
   if (!diff) {
     return (
-      <Box sx={{ fontSize: '0.78rem', color: 'text.disabled', textAlign: 'center' }}>
+      <Box sx={{ fontSize: '0.75rem', fontFamily: MONO_FONT_FAMILY, color: 'text.disabled', textAlign: 'center' }}>
         {emptyLabel}
       </Box>
     );
@@ -32,11 +33,19 @@ export function SplitCell<V>({ diff, format, emptyLabel = '--' }: SplitCellProps
   };
 
   const { status, a, b } = diff;
-  const colors = STATUS_COLORS[status] ?? STATUS_COLORS.same;
+  const style = STATUS_STYLE[status] ?? STATUS_STYLE.same;
 
   if (status === 'same') {
     return (
-      <Box sx={{ fontSize: '0.78rem', color: 'text.secondary', textAlign: 'center' }}>
+      <Box
+        sx={{
+          fontSize: '0.75rem',
+          fontFamily: MONO_FONT_FAMILY,
+          fontVariantNumeric: 'tabular-nums',
+          color: 'text.secondary',
+          textAlign: 'center',
+        }}
+      >
         {fmt(a)}
       </Box>
     );
@@ -44,31 +53,76 @@ export function SplitCell<V>({ diff, format, emptyLabel = '--' }: SplitCellProps
 
   if (status === 'a-only') {
     return (
-      <Box sx={{ bgcolor: colors.bg, borderRadius: 1, px: 0.5, textAlign: 'center' }}>
-        <Box sx={{ fontSize: '0.78rem', color: colors.text, fontWeight: 600 }}>{fmt(a)}</Box>
-        <Box sx={{ fontSize: '0.72rem', color: 'text.disabled' }}>{emptyLabel}</Box>
+      <Box
+        sx={{
+          bgcolor: style.bg,
+          border: `1px solid ${DEVICE_COLOR.deviceA}33`,
+          borderRadius: 1,
+          px: 0.6,
+          py: 0.2,
+          textAlign: 'center',
+          fontFamily: MONO_FONT_FAMILY,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.4 }}>
+          <Box component="span" sx={{ fontSize: '0.56rem', fontWeight: 800, color: DEVICE_COLOR.deviceA }}>A</Box>
+          <Box component="span" sx={{ fontSize: '0.74rem', color: DEVICE_COLOR.deviceA, fontWeight: 700 }}>{fmt(a)}</Box>
+        </Box>
+        <Box sx={{ fontSize: '0.68rem', color: 'text.disabled', lineHeight: 1.1 }}>{emptyLabel}</Box>
       </Box>
     );
   }
 
   if (status === 'b-only') {
     return (
-      <Box sx={{ bgcolor: colors.bg, borderRadius: 1, px: 0.5, textAlign: 'center' }}>
-        <Box sx={{ fontSize: '0.72rem', color: 'text.disabled' }}>{emptyLabel}</Box>
-        <Box sx={{ fontSize: '0.78rem', color: colors.text, fontWeight: 600 }}>{fmt(b)}</Box>
+      <Box
+        sx={{
+          bgcolor: style.bg,
+          border: `1px solid ${DEVICE_COLOR.deviceB}33`,
+          borderRadius: 1,
+          px: 0.6,
+          py: 0.2,
+          textAlign: 'center',
+          fontFamily: MONO_FONT_FAMILY,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        <Box sx={{ fontSize: '0.68rem', color: 'text.disabled', lineHeight: 1.1 }}>{emptyLabel}</Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.4 }}>
+          <Box component="span" sx={{ fontSize: '0.56rem', fontWeight: 800, color: DEVICE_COLOR.deviceB }}>B</Box>
+          <Box component="span" sx={{ fontSize: '0.74rem', color: DEVICE_COLOR.deviceB, fontWeight: 700 }}>{fmt(b)}</Box>
+        </Box>
       </Box>
     );
   }
 
   // changed
   return (
-    <Box sx={{ bgcolor: colors.bg, borderRadius: 1, px: 0.5, textAlign: 'center' }}>
-      <Tooltip title={`A: ${fmt(a)}`} placement="top">
-        <Box sx={{ fontSize: '0.78rem', color: colors.text, fontWeight: 600 }}>{fmt(a)}</Box>
+    <Box
+      sx={{
+        bgcolor: style.bg,
+        border: `1px solid ${STATUS_COLOR.amber}44`,
+        borderRadius: 1,
+        px: 0.6,
+        py: 0.2,
+        textAlign: 'center',
+        fontFamily: MONO_FONT_FAMILY,
+        fontVariantNumeric: 'tabular-nums',
+      }}
+    >
+      <Tooltip title={`A: ${fmt(a)}`} placement="top" arrow>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.4 }}>
+          <Box component="span" sx={{ fontSize: '0.56rem', fontWeight: 800, color: DEVICE_COLOR.deviceA }}>A</Box>
+          <Box component="span" sx={{ fontSize: '0.74rem', color: STATUS_COLOR.amber, fontWeight: 700 }}>{fmt(a)}</Box>
+        </Box>
       </Tooltip>
-      <Box sx={{ fontSize: '0.65rem', color: 'text.disabled', lineHeight: 1 }}>↕</Box>
-      <Tooltip title={`B: ${fmt(b)}`} placement="bottom">
-        <Box sx={{ fontSize: '0.78rem', color: colors.text, fontWeight: 600 }}>{fmt(b)}</Box>
+      <Box sx={{ height: '1px', bgcolor: 'divider', my: 0.2 }} />
+      <Tooltip title={`B: ${fmt(b)}`} placement="bottom" arrow>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.4 }}>
+          <Box component="span" sx={{ fontSize: '0.56rem', fontWeight: 800, color: DEVICE_COLOR.deviceB }}>B</Box>
+          <Box component="span" sx={{ fontSize: '0.74rem', color: STATUS_COLOR.amber, fontWeight: 700 }}>{fmt(b)}</Box>
+        </Box>
       </Tooltip>
     </Box>
   );

@@ -50,7 +50,7 @@ interface CapaCompareContextType {
   comboOptions: ComboDisplayOptions;
   setActiveRat: (rat: RatType) => void;
   setComboOptions: React.Dispatch<React.SetStateAction<ComboDisplayOptions>>;
-  addFiles: (side: 'a' | 'b', files: File[]) => Promise<void>;
+  addFiles: (side: 'a' | 'b', files: File[]) => Promise<{ hasError: boolean }>;
   removeFile: (side: 'a' | 'b', fileName: string) => void;
   setDeviceName: (side: 'a' | 'b', name: string) => void;
   clearDevice: (side: 'a' | 'b') => void;
@@ -72,7 +72,7 @@ function guessDeviceName(files: File[]): string {
   if (files.length === 0) return '';
   const name = files[0].name;
   return name
-    .replace(/\.(txt|json)$/i, '')
+    .replace(/\.(txt|log|json)$/i, '')
     .replace(/_(eutra|nr|utra|eutra-nr|eutra_utra|eutra-nr_nr)[^_]*$/i, '')
     .trim();
 }
@@ -82,24 +82,141 @@ function normalizeFiles(files: ParsedFile[], deviceName: string): DeviceState['n
   if (doneFiles.length === 0) return null;
 
   try {
+    type CapaDoc = ReturnType<typeof normalizeMultipleCapa>;
+
+    function mergeRatPair<
+      B extends { displayName: string },
+      C extends NonNullable<CapaDoc['rats']['nr']>['bandCombinations'][number],
+      FS extends { index: number } = { index: number },
+      R extends { bands: B[]; bandCombinations: C[]; featureSets?: FS[] } = { bands: B[]; bandCombinations: C[]; featureSets?: FS[] }
+    >(base: R | undefined, inc: R | undefined): R | undefined {
+      if (!base) return inc;
+      if (!inc) return base;
+      const bandMap = new Map<string, B>();
+      for (const b of base.bands) bandMap.set(b.displayName, b);
+      for (const b of inc.bands) bandMap.set(b.displayName, b);
+      const comboMap = new Map<string, C>();
+      for (const c of [...base.bandCombinations, ...inc.bandCombinations]) {
+        const k = `${c.key ?? JSON.stringify(c.bands)}|${c.powerClass ?? ''}`;
+        comboMap.set(k, c);
+      }
+      const merged: R = {
+        ...base,
+        ...inc,
+        bands: Array.from(bandMap.values()),
+        bandCombinations: Array.from(comboMap.values()),
+      };
+      if (base.featureSets || inc.featureSets) {
+        const fsMap = new Map<number, FS>();
+        for (const fs of base.featureSets ?? []) fsMap.set(fs.index, fs);
+        for (const fs of inc.featureSets ?? []) fsMap.set(fs.index, fs);
+        merged.featureSets = Array.from(fsMap.values());
+      }
+      return merged;
+    }
+
+    function mergeCommonCapaDocs(docs: CapaDoc[], targetName: string): CapaDoc {
+      const first = docs[0]!;
+      if (docs.length === 1) {
+        return {
+          ...first,
+          meta: { ...first.meta, deviceName: targetName },
+        };
+      }
+      let acc: CapaDoc = {
+        ...first,
+        meta: { ...first.meta, deviceName: targetName },
+        rats: { ...first.rats },
+        features: first.features ? { ...first.features } : undefined,
+        diagnostics: {
+          warnings: [...first.diagnostics.warnings],
+          errors: [...first.diagnostics.errors],
+          parsedLines: first.diagnostics.parsedLines,
+          skippedLines: first.diagnostics.skippedLines,
+        },
+      };
+      const ratKeys: RatType[] = ['nr', 'eutra', 'eutra-nr', 'utra'];
+      const detectedSet = new Set<RatType>(first.meta.detectedRats);
+      const sourceFileSet = new Set<string>(first.meta.sourceFiles ?? (first.meta.fileName ? [first.meta.fileName] : []));
+
+      for (const inc of docs.slice(1)) {
+        for (const r of inc.meta.detectedRats) detectedSet.add(r);
+        for (const sf of inc.meta.sourceFiles ?? (inc.meta.fileName ? [inc.meta.fileName] : [])) {
+          sourceFileSet.add(sf);
+        }
+        acc.meta = {
+          ...acc.meta,
+          deviceName: targetName,
+          vendor: acc.meta.vendor !== 'UNKNOWN' ? acc.meta.vendor : inc.meta.vendor,
+          sourceFiles: Array.from(sourceFileSet),
+          detectedRats: Array.from(detectedSet),
+          asRelease: (acc.meta.asRelease || inc.meta.asRelease)
+            ? { ...acc.meta.asRelease, ...inc.meta.asRelease }
+            : undefined,
+          fileSize: (acc.meta.fileSize !== undefined || inc.meta.fileSize !== undefined)
+            ? (acc.meta.fileSize ?? 0) + (inc.meta.fileSize ?? 0)
+            : undefined,
+          totalLines: (acc.meta.totalLines !== undefined || inc.meta.totalLines !== undefined)
+            ? (acc.meta.totalLines ?? 0) + (inc.meta.totalLines ?? 0)
+            : undefined,
+        };
+        acc.rats = {
+          nr: mergeRatPair(acc.rats.nr, inc.rats.nr),
+          eutra: mergeRatPair(acc.rats.eutra, inc.rats.eutra),
+          'eutra-nr': mergeRatPair(acc.rats['eutra-nr'], inc.rats['eutra-nr']),
+          utra: mergeRatPair(acc.rats.utra, inc.rats.utra),
+        };
+        if (inc.features) {
+          const nextFeatures = { ...(acc.features ?? {}) };
+          for (const rk of ratKeys) {
+            const rfA = nextFeatures[rk];
+            const rfB = inc.features[rk];
+            if (!rfA && rfB) {
+              nextFeatures[rk] = rfB;
+            } else if (rfA && rfB) {
+              const leafMap = new Map<string, (typeof rfA.leaves)[number]>();
+              for (const l of rfA.leaves) leafMap.set(`${l.major}|${l.middle}|${l.leaf}`, l);
+              for (const l of rfB.leaves) leafMap.set(`${l.major}|${l.middle}|${l.leaf}`, l);
+              const unkMap = new Map<string, NonNullable<typeof rfA.unclassified>[number]>();
+              for (const u of rfA.unclassified ?? []) unkMap.set(`${u.path}|${u.codeSnippet}`, u);
+              for (const u of rfB.unclassified ?? []) unkMap.set(`${u.path}|${u.codeSnippet}`, u);
+              const unclassified = Array.from(unkMap.values());
+              nextFeatures[rk] = {
+                leaves: Array.from(leafMap.values()),
+                ...(unclassified.length > 0 ? { unclassified } : {}),
+              };
+            }
+          }
+          acc.features = nextFeatures;
+        }
+        acc.diagnostics = {
+          warnings: [...acc.diagnostics.warnings, ...inc.diagnostics.warnings],
+          errors: [...acc.diagnostics.errors, ...inc.diagnostics.errors],
+          parsedLines: (acc.diagnostics.parsedLines !== undefined || inc.diagnostics.parsedLines !== undefined)
+            ? (acc.diagnostics.parsedLines ?? 0) + (inc.diagnostics.parsedLines ?? 0)
+            : undefined,
+          skippedLines: (acc.diagnostics.skippedLines !== undefined || inc.diagnostics.skippedLines !== undefined)
+            ? (acc.diagnostics.skippedLines ?? 0) + (inc.diagnostics.skippedLines ?? 0)
+            : undefined,
+        };
+      }
+      return acc;
+    }
+
     const asts = doneFiles
       .map(f => f.ast)
       .filter((ast): ast is CanonicalAsn1Tree => ast !== null);
 
-    if (asts.length > 0) {
-      return normalizeMultipleCapa(asts, deviceName);
-    }
+    const commonJsons = doneFiles
+      .map(f => f.commonJson)
+      .filter((cj): cj is NonNullable<typeof cj> => cj != null);
 
-    const commonJsons = doneFiles.map(f => f.commonJson).filter(Boolean);
-    if (commonJsons.length > 0) {
-      const latest = commonJsons[commonJsons.length - 1]!;
-      return {
-        ...latest,
-        meta: {
-          ...latest.meta,
-          deviceName,
-        },
-      };
+    const docs: CapaDoc[] = [
+      ...(asts.length > 0 ? [normalizeMultipleCapa(asts, deviceName)] : []),
+      ...commonJsons,
+    ];
+    if (docs.length > 0) {
+      return mergeCommonCapaDocs(docs, deviceName);
     }
 
     return null;
@@ -191,9 +308,12 @@ export const CapaCompareProvider: React.FC<{ children: ReactNode }> = ({ childre
       startTransition(() => {
         setCompareResult(memoizedCompareResult);
         setActiveRat(prev => {
-          if (memoizedCompareResult.ratResults[prev]) return prev;
+          const hasData = (rat: RatType) =>
+            Boolean(memoizedCompareResult.ratResults[rat]) ||
+            (memoizedCompareResult.featuresDiff?.[rat]?.diffs.length ?? 0) > 0;
+          if (hasData(prev)) return prev;
           const rats: RatType[] = ['nr', 'eutra', 'eutra-nr', 'utra'];
-          return rats.find(r => memoizedCompareResult.ratResults[r]) ?? prev;
+          return rats.find(hasData) ?? prev;
         });
         setIsComparing(false);
       });
@@ -241,14 +361,14 @@ export const CapaCompareProvider: React.FC<{ children: ReactNode }> = ({ childre
   }, []);
 
   const addFiles = useCallback(
-    async (side: 'a' | 'b', newFiles: File[]) => {
+    async (side: 'a' | 'b', newFiles: File[]): Promise<{ hasError: boolean }> => {
       if (newFiles.length === 1 && newFiles[0].name.toLowerCase().endsWith('.json')) {
         try {
           const rawText = await newFiles[0].text();
           const parsedJson = JSON.parse(rawText) as unknown;
           if (isCapaSessionSnapshot(parsedJson)) {
             loadDevices(parsedJson.deviceA, parsedJson.deviceB);
-            return;
+            return { hasError: false };
           }
         } catch {
           // Fall through to standard file parsing
@@ -256,14 +376,15 @@ export const CapaCompareProvider: React.FC<{ children: ReactNode }> = ({ childre
       }
 
       const setter = side === 'a' ? setDeviceA : setDeviceB;
+      const dedupedNewFiles = Array.from(new Map(newFiles.map(f => [f.name, f])).values());
+      const incomingNames = new Set(dedupedNewFiles.map(f => f.name));
 
       setter(prev => ({
         ...prev,
         isProcessing: true,
-        deviceName: prev.deviceName || guessDeviceName(newFiles),
         files: [
-          ...prev.files,
-          ...newFiles.map(f => ({
+          ...prev.files.filter(f => !incomingNames.has(f.file.name)),
+          ...dedupedNewFiles.map(f => ({
             file: f,
             ast: null,
             commonJson: null,
@@ -273,11 +394,8 @@ export const CapaCompareProvider: React.FC<{ children: ReactNode }> = ({ childre
         ],
       }));
 
-      // Yield to browser paint loop so loading indicators render smoothly on large logs
-      await new Promise<void>(r => setTimeout(r, 16));
-
       const parsed = await Promise.all(
-        newFiles.map(f =>
+        dedupedNewFiles.map(f =>
           parseFile(f).catch(err => ({
             file: f,
             ast: null,
@@ -292,9 +410,18 @@ export const CapaCompareProvider: React.FC<{ children: ReactNode }> = ({ childre
       setter(prev => {
         const parsedMap = new Map(parsed.map(p => [p.file, p]));
         const updatedFiles = prev.files.map(pf => parsedMap.get(pf.file) ?? pf);
-        const normalized = normalizeFiles(updatedFiles, prev.deviceName);
-        return { ...prev, files: updatedFiles, normalized, isProcessing: false };
+        const doneInputFiles = updatedFiles.filter(f => f.status === 'done').map(f => f.file);
+        const deviceName = doneInputFiles.length > 0 ? (prev.deviceName || guessDeviceName(doneInputFiles)) : '';
+        const normalized = normalizeFiles(updatedFiles, deviceName);
+        return {
+          ...prev,
+          deviceName,
+          files: updatedFiles,
+          normalized,
+          isProcessing: updatedFiles.some(f => f.status === 'parsing'),
+        };
       });
+      return { hasError: parsed.some(p => p.status === 'error') };
     },
     [loadDevices]
   );
@@ -303,14 +430,22 @@ export const CapaCompareProvider: React.FC<{ children: ReactNode }> = ({ childre
     const setter = getDeviceSetter(side, setDeviceA, setDeviceB);
     setter((prev: DeviceState) => {
       const files = prev.files.filter((f: ParsedFile) => f.file.name !== fileName);
-      const normalized = normalizeFiles(files, prev.deviceName);
-      return { ...prev, files, normalized };
+      const hasDone = files.some((f: ParsedFile) => f.status === 'done');
+      const deviceName = hasDone ? prev.deviceName : '';
+      const normalized = normalizeFiles(files, deviceName);
+      return { ...prev, files, deviceName, normalized };
     });
   }, []);
 
   const setDeviceName = useCallback((side: 'a' | 'b', name: string) => {
     const setter = getDeviceSetter(side, setDeviceA, setDeviceB);
-    setter((prev: DeviceState) => ({ ...prev, deviceName: name }));
+    setter((prev: DeviceState) => ({
+      ...prev,
+      deviceName: name,
+      normalized: prev.normalized
+        ? { ...prev.normalized, meta: { ...prev.normalized.meta, deviceName: name } }
+        : prev.normalized,
+    }));
   }, []);
 
   const clearDevice = useCallback((side: 'a' | 'b') => {
@@ -353,8 +488,12 @@ export const CapaCompareProvider: React.FC<{ children: ReactNode }> = ({ childre
   );
 };
 
+export function useOptionalCapaCompare() {
+  return use(CapaCompareContext);
+}
+
 export function useCapaCompare(): CapaCompareContextType {
-  const ctx = use(CapaCompareContext);
+  const ctx = useOptionalCapaCompare();
   if (ctx === undefined) {
     throw new Error('useCapaCompare must be used within a CapaCompareProvider');
   }

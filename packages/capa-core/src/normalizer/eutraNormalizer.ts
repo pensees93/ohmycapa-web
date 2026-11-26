@@ -32,6 +32,7 @@ interface RawEutraComboGroup {
 }
 
 function applyUl256QamFromExt(bp: BandParameter, extBandParam: Asn1Record): void {
+  if (!bp.bandwidthClassUL) return;
   if (isSupported(extBandParam['ul-256QAM-r14']) || isSupported(extBandParam['ul-256QAM-r15'])) {
     bp.ulQam = pickHigherQam(bp.ulQam, 'qam256');
   }
@@ -43,10 +44,10 @@ function applyUl256QamFromExt(bp: BandParameter, extBandParam: Asn1Record): void
   }
 }
 
-function parseEutraBandParameter(
+function parseEutraBandParameters(
   rawBp: Asn1Record,
   suffix: 'r10' | 'r11' | 'r13'
-): BandParameter | undefined {
+): BandParameter[] {
   const band = extractNumber(
     rawBp[`bandEUTRA-${suffix}`] ??
       rawBp['bandEUTRA-r10'] ??
@@ -54,7 +55,7 @@ function parseEutraBandParameter(
       rawBp['bandEUTRA-r13'] ??
       rawBp['bandEUTRA']
   );
-  if (band === undefined) return undefined;
+  if (band === undefined) return [];
 
   const dlItems = toArray(
     rawBp[`bandParametersDL-${suffix}`] ??
@@ -70,55 +71,65 @@ function parseEutraBandParameter(
       rawBp['bandParametersUL-r13']
   ).filter(isRecord);
 
-  let bwClassDL: string | undefined;
-  let dlMimo: number | undefined;
-  let fourLayerTM3_TM4: boolean | undefined;
-  for (const dl of dlItems) {
-    const cls = dl[`ca-BandwidthClassDL-${suffix}`] ?? dl['ca-BandwidthClassDL-r10'] ?? dl['ca-BandwidthClassDL-r13'];
-    if (!bwClassDL && typeof cls === 'string') bwClassDL = cls;
+  const count = Math.max(1, dlItems.length, ulItems.length);
+  const out: BandParameter[] = [];
 
-    const layers = parseMimoLayers(
-      dl[`supportedMIMO-CapabilityDL-${suffix}`] ??
-        dl['supportedMIMO-CapabilityDL-r10'] ??
-        dl['supportedMIMO-CapabilityDL-r13']
-    );
-    if (layers !== undefined && (dlMimo === undefined || layers > dlMimo)) {
-      dlMimo = layers;
-    }
+  for (let idx = 0; idx < count; idx++) {
+    const dl = idx < dlItems.length ? dlItems[idx] : undefined;
+    const ul = idx < ulItems.length ? ulItems[idx] : undefined;
 
-    if (parseSupportedFlag(dl['fourLayerTM3-TM4-r13'] ?? dl['fourLayerTM3-TM4-r10'])) {
-      fourLayerTM3_TM4 = true;
-      if (dlMimo === undefined || dlMimo < 4) {
-        dlMimo = 4;
+    let bwClassDL: string | undefined;
+    let dlMimo: number | undefined;
+    let fourLayerTM3_TM4: boolean | undefined;
+    if (dl) {
+      const cls = dl[`ca-BandwidthClassDL-${suffix}`] ?? dl['ca-BandwidthClassDL-r10'] ?? dl['ca-BandwidthClassDL-r13'];
+      if (typeof cls === 'string') bwClassDL = cls;
+
+      const layers = parseMimoLayers(
+        dl[`supportedMIMO-CapabilityDL-${suffix}`] ??
+          dl['supportedMIMO-CapabilityDL-r10'] ??
+          dl['supportedMIMO-CapabilityDL-r13']
+      );
+      if (layers !== undefined) {
+        dlMimo = layers;
+      }
+
+      if (parseSupportedFlag(dl['fourLayerTM3-TM4-r13'] ?? dl['fourLayerTM3-TM4-r10'])) {
+        fourLayerTM3_TM4 = true;
+        if (dlMimo === undefined || dlMimo < 4) {
+          dlMimo = 4;
+        }
       }
     }
-  }
 
-  let bwClassUL: string | undefined;
-  let ulMimo: number | undefined;
-  for (const ul of ulItems) {
-    const cls = ul[`ca-BandwidthClassUL-${suffix}`] ?? ul['ca-BandwidthClassUL-r10'] ?? ul['ca-BandwidthClassUL-r13'];
-    if (!bwClassUL && typeof cls === 'string') bwClassUL = cls;
+    let bwClassUL: string | undefined;
+    let ulMimo: number | undefined;
+    if (ul) {
+      const cls = ul[`ca-BandwidthClassUL-${suffix}`] ?? ul['ca-BandwidthClassUL-r10'] ?? ul['ca-BandwidthClassUL-r13'];
+      if (typeof cls === 'string') bwClassUL = cls;
 
-    const layers = parseMimoLayers(
-      ul[`supportedMIMO-CapabilityUL-${suffix}`] ??
-        ul['supportedMIMO-CapabilityUL-r10'] ??
-        ul['supportedMIMO-CapabilityUL-r13']
-    );
-    if (layers !== undefined && (ulMimo === undefined || layers > ulMimo)) {
-      ulMimo = layers;
+      const layers = parseMimoLayers(
+        ul[`supportedMIMO-CapabilityUL-${suffix}`] ??
+          ul['supportedMIMO-CapabilityUL-r10'] ??
+          ul['supportedMIMO-CapabilityUL-r13']
+      );
+      if (layers !== undefined) {
+        ulMimo = layers;
+      }
     }
+
+    out.push({
+      ratType: 'eutra',
+      band,
+      ...(bwClassDL ? { bandwidthClassDL: bwClassDL } : {}),
+      ...(bwClassUL ? { bandwidthClassUL: bwClassUL } : {}),
+      ...(dlMimo !== undefined ? { dlMimo } : {}),
+      ...(ulMimo !== undefined ? { ulMimo } : {}),
+      ...(fourLayerTM3_TM4 ? { fourLayerTM3_TM4: true } : {}),
+    });
   }
 
-  return {
-    ratType: 'eutra',
-    band,
-    ...(bwClassDL ? { bandwidthClassDL: bwClassDL } : {}),
-    ...(bwClassUL ? { bandwidthClassUL: bwClassUL } : {}),
-    ...(dlMimo !== undefined ? { dlMimo } : {}),
-    ...(ulMimo !== undefined ? { ulMimo } : {}),
-    ...(fourLayerTM3_TM4 ? { fourLayerTM3_TM4: true } : {}),
-  };
+  return out;
 }
 
 function buildEutraCombosFromGroup(
@@ -146,40 +157,44 @@ function buildEutraCombosFromGroup(
 
     if (rawParams.length === 0) continue;
 
-    const bands: BandParameter[] = [];
+    const bandsByGroup: BandParameter[][] = [];
     for (const rawBp of rawParams) {
-      const bp = parseEutraBandParameter(rawBp, suffix);
-      if (bp) bands.push(bp);
+      const parsedBps = parseEutraBandParameters(rawBp, suffix);
+      if (parsedBps.length > 0) bandsByGroup.push(parsedBps);
     }
-    if (bands.length === 0) continue;
+    if (bandsByGroup.length === 0) continue;
 
     // Apply v1090 band number extensions (e.g. band 64 -> band 66/71)
     const v1090Item = extensions.v1090 && i < extensions.v1090.length ? extensions.v1090[i] : undefined;
     const v1090List = toArray(
       isRecord(v1090Item) ? v1090Item['bandParameterList-v1090'] ?? v1090Item : v1090Item
     );
-    for (let bIdx = 0; bIdx < bands.length && bIdx < v1090List.length; bIdx++) {
+    for (let bIdx = 0; bIdx < bandsByGroup.length && bIdx < v1090List.length; bIdx++) {
       const extBp = v1090List[bIdx];
       if (!isRecord(extBp)) continue;
       const extBand = extractNumber(extBp['bandEUTRA-v1090']);
-      if (extBand !== undefined && bands[bIdx].band === 64) {
-        bands[bIdx].band = extBand;
+      if (extBand !== undefined) {
+        for (const bp of bandsByGroup[bIdx]) {
+          if (bp.band === 64) bp.band = extBand;
+        }
       }
     }
 
     // Apply v10i0 / v11d0 (fourLayerTM3-TM4-r10 & extended MIMO)
     const v10i0Item = extensions.v10i0 && i < extensions.v10i0.length ? extensions.v10i0[i] : undefined;
     const v10i0List = isRecord(v10i0Item) ? toArray(v10i0Item['bandParameterList-v10i0']) : [];
-    for (let bIdx = 0; bIdx < bands.length && bIdx < v10i0List.length; bIdx++) {
+    for (let bIdx = 0; bIdx < bandsByGroup.length && bIdx < v10i0List.length; bIdx++) {
       const extBp = v10i0List[bIdx];
       if (!isRecord(extBp)) continue;
-      for (const dlExt of toArray(extBp['bandParametersDL-v10i0'])) {
-        if (!isRecord(dlExt)) continue;
+      const dlExtList = toArray(extBp['bandParametersDL-v10i0']).filter(isRecord);
+      for (let ccIdx = 0; ccIdx < bandsByGroup[bIdx].length; ccIdx++) {
+        const dlExt = dlExtList[ccIdx] ?? (dlExtList.length === 1 ? dlExtList[0] : undefined);
+        if (!dlExt) continue;
         if (parseSupportedFlag(dlExt['fourLayerTM3-TM4-r10'])) {
-          bands[bIdx].fourLayerTM3_TM4 = true;
-          const curDlMimo = bands[bIdx].dlMimo;
+          bandsByGroup[bIdx][ccIdx].fourLayerTM3_TM4 = true;
+          const curDlMimo = bandsByGroup[bIdx][ccIdx].dlMimo;
           if (curDlMimo === undefined || curDlMimo < 4) {
-            bands[bIdx].dlMimo = 4;
+            bandsByGroup[bIdx][ccIdx].dlMimo = 4;
           }
         }
       }
@@ -188,12 +203,16 @@ function buildEutraCombosFromGroup(
     // Apply v1430 / Reduced-v1430 (UL 256QAM)
     const v1430Item = extensions.v1430 && i < extensions.v1430.length ? extensions.v1430[i] : undefined;
     const v1430List = isRecord(v1430Item) ? toArray(v1430Item['bandParameterList-v1430']) : [];
-    for (let bIdx = 0; bIdx < bands.length && bIdx < v1430List.length; bIdx++) {
+    for (let bIdx = 0; bIdx < bandsByGroup.length && bIdx < v1430List.length; bIdx++) {
       const extBp = v1430List[bIdx];
       if (isRecord(extBp)) {
-        applyUl256QamFromExt(bands[bIdx], extBp);
+        for (const bp of bandsByGroup[bIdx]) {
+          applyUl256QamFromExt(bp, extBp);
+        }
       }
     }
+
+    const bands = bandsByGroup.flat();
 
     // Extract BCS & PowerClass per combo
     const extR10Item = extensions.extR10 && i < extensions.extR10.length ? extensions.extR10[i] : undefined;
@@ -316,6 +335,11 @@ export function extractEutraRat(eutraPdu: Asn1Record): {
 
   // 4. Bidirectional band <-> combo capability propagation (MIMO / QAM)
   const bandLookup = new Map<number, EutraBandInfo>(bands.map((b) => [b.band, b]));
+  // Track per-band UL QAM from v1250 separately so per-combination ul-256QAM-r14 is not promoted across all CA combos
+  const perBandUlQam = new Map<number, string>();
+  for (const b of bands) {
+    if (b.ulQam) perBandUlQam.set(b.band, b.ulQam);
+  }
 
   // Single-band combos -> band info (max MIMO, UL 256QAM)
   for (const combo of allCombos) {
@@ -349,8 +373,9 @@ export function extractEutraRat(eutraPdu: Asn1Record): {
         if (bandInfo.dlQam) {
           bp.dlQam = pickHigherQam(bp.dlQam, bandInfo.dlQam);
         }
-        if (bp.bandwidthClassUL && bandInfo.ulQam) {
-          bp.ulQam = pickHigherQam(bp.ulQam, bandInfo.ulQam);
+        const fallbackUlQam = perBandUlQam.get(bp.band);
+        if (bp.bandwidthClassUL && fallbackUlQam) {
+          bp.ulQam = pickHigherQam(bp.ulQam, fallbackUlQam);
         }
         if (bp.dlMimo === undefined && bandInfo.dlMimo !== undefined) {
           bp.dlMimo = bandInfo.dlMimo;

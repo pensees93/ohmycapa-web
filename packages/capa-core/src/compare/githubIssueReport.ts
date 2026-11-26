@@ -33,9 +33,12 @@ export interface ParseErrorIssueReport {
   title: string;
   markdownBody: string;
   issueUrl: string;
+  requiresCopy: boolean;
 }
 
 const MAX_ISSUE_URL_BODY_LENGTH = 5500;
+// Keep full prefilled URLs safely below Windows ShellExecuteW (~2,083 chars) limit.
+const MAX_ISSUE_DRAFT_URL_LENGTH = 2000;
 const RAT_ORDER: readonly RatType[] = ['nr', 'eutra', 'eutra-nr', 'utra'];
 
 function normalizeRepoUrl(repoUrl: string): string {
@@ -165,6 +168,18 @@ export function buildUnclassifiedSpecIssueReport(
   };
 }
 
+/** Prepare a draft with an optional literal log excerpt after the machine-readable block. */
+export function prepareUnclassifiedSpecIssueDraft(report: UnclassifiedSpecIssueReport, rawLogExcerpt: string) {
+  const excerpt = rawLogExcerpt.trimEnd();
+  const codeBlock = excerpt.split(/\r\n?|\n/).map(line => `    ${line}`).join('\n');
+  const markdownBody = excerpt ? `${report.markdownBody}\n\n### Raw log excerpt\n\n${codeBlock}` : report.markdownBody;
+  const url = new URL(report.issueUrl);
+  url.searchParams.set('body', markdownBody);
+  const requiresCopy = url.href.length > MAX_ISSUE_DRAFT_URL_LENGTH;
+  if (requiresCopy) url.searchParams.delete('body');
+  return { markdownBody, issueUrl: url.href, requiresCopy };
+}
+
 /**
  * Build a pre-filled GitHub Issue URL for reporting unrecognized log formats or parse failures.
  */
@@ -200,10 +215,18 @@ export function buildParseErrorIssueReport(
     body: markdownBody,
   });
 
+  let issueUrl = `${cleanRepo}/issues/new?${params.toString()}`;
+  const requiresCopy = issueUrl.length > MAX_ISSUE_DRAFT_URL_LENGTH;
+  if (requiresCopy) {
+    params.delete('body');
+    issueUrl = `${cleanRepo}/issues/new?${params.toString()}`;
+  }
+
   return {
     title,
     markdownBody,
-    issueUrl: `${cleanRepo}/issues/new?${params.toString()}`,
+    issueUrl,
+    requiresCopy,
   };
 }
 
@@ -212,8 +235,9 @@ export function buildParseErrorIssueReport(
  */
 export function parseAutoSpecBlockFromIssueBody(body: string): AutoSpecIssueEntry[] {
   const startIdx = body.indexOf(AUTO_SPEC_START_MARKER);
-  const endIdx = body.indexOf(AUTO_SPEC_END_MARKER);
-  if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
+  if (startIdx === -1) return [];
+  const endIdx = body.indexOf(AUTO_SPEC_END_MARKER, startIdx + AUTO_SPEC_START_MARKER.length);
+  if (endIdx === -1 || endIdx <= startIdx) {
     return [];
   }
 
@@ -222,7 +246,12 @@ export function parseAutoSpecBlockFromIssueBody(body: string): AutoSpecIssueEntr
   const rawJson = (jsonMatch[1] ?? '').trim();
   if (!rawJson) return [];
 
-  const parsed = JSON.parse(rawJson) as { specs?: unknown[] };
+  let parsed: { specs?: unknown[] };
+  try {
+    parsed = JSON.parse(rawJson) as { specs?: unknown[] };
+  } catch {
+    return [];
+  }
   if (!parsed || !Array.isArray(parsed.specs)) return [];
 
   const validRats = new Set<RatType>(['nr', 'eutra', 'eutra-nr', 'utra']);

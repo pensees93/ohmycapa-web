@@ -7,6 +7,14 @@ import type { FeatureSpec } from './specTypes';
 export const NR_FEATURE_SPECS: FeatureSpec[] = [
   {
     "major": "General",
+    "middle": "FeatureSetsUplink (V1610)",
+    "leaf": "ul-FullPwrMode-r16",
+    "path": "featureSets.featureSetsUplink-v1610.ul-FullPwrMode-r16",
+    "kind": "bool",
+    "description": "Uplink full power mode support (Rel-16)"
+  },
+  {
+    "major": "General",
     "middle": "AS Release",
     "leaf": "accessStratumRelease",
     "path": "accessStratumRelease",

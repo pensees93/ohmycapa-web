@@ -11,7 +11,7 @@ export type SaveFileFn = (buffer: Uint8Array, fileName: string) => Promise<void>
 export type SaveTextFn = (content: string, fileName: string) => Promise<void>;
 
 // Module-level registry — OhMyCapa registers Tauri-specific handlers at startup.
-// PLM never calls these, so they stay null and fall back to browser download.
+// Web hosts never call these, so they stay null and fall back to browser download.
 let registeredSaveFn: SaveFileFn | null = null;
 let registeredJsonSaveFn: SaveTextFn | null = null;
 
@@ -25,7 +25,8 @@ export function registerJsonSaveHandler(fn: SaveTextFn): void {
 
 async function saveFile(wb: XLSX.WorkBook, fileName: string): Promise<void> {
   if (registeredSaveFn) {
-    const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as Uint8Array;
+    const raw = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer | Uint8Array | number[];
+    const buffer = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
     await registeredSaveFn(buffer, fileName);
   } else {
     XLSX.writeFile(wb, fileName);
